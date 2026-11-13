@@ -50,7 +50,7 @@ fork that declares a matrix. The details are in [The compiler matrix](#the-compi
 | Compiler matrix | `compiler_matrix(function)` compiles one function's C under every compiler profile the project declares and five translation-unit contexts, and diffs each object against the original. A match the file's own build makes is committed; one that needs the build changed is saved with its recipe. |
 | Kinds of difference | A miss says what is left: GP-relative addressing, `%hi`/`%lo` splitting, delay slots, load delays, nops, register allocation, moved branch targets, apart from different code. When all of it is compiler-like, the matrix runs on its own. |
 | Strict verification and learning | A matrix hit counts only when the function's bytes and relocation identities are the original's (a jump inside the function is compared by where it lands). Recipes that verified for other functions of the same file are tried first. |
-| Batch permuter | Rewrites of a near miss that keep its meaning are compiled 24 at a time by one run of the matrix build. |
+| Batch permuter | Rewrites of a near miss that keep its meaning are compiled 24 at a time by one run of the matrix build. A project can have decomp-permuter write them (`"permute"` in its matrix); otherwise built-in rewrites are used. |
 | Self-contained attempts | A function brings its macros, type definitions and static helpers; a miss is remembered with them. |
 | The project's own C as a seed | A project that keeps C which behaves like the original without matching it yet names where (`"seeds"`). For a function with no C in its file, that is what the agent's brief shows instead of a machine draft, and what the matrix and its sweep compile. |
 
@@ -61,7 +61,7 @@ order of statements and declarations, a temporary, a cast, `register`, the form 
 
 1. It starts from the closest source the matrix has measured for the function, under the profile and context
    where that source came closest.
-2. Each round makes up to 24 rewrites (`permuter.py`), places each one in the function's translation unit, and
+2. Each round makes up to 24 rewrites (the project's `"permute"` command, usually decomp-permuter; else `permuter.py`), places each one in the function's translation unit, and
    hands all of them to the project's matrix build in one job. One process start compiles the round; in a fork,
    the ordinary permuter wrote the file, built the unit and undid it for every single rewrite.
 3. Every object is diffed and verified. A rewrite that is closer becomes the new starting point (mostly downhill,
