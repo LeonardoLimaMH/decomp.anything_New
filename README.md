@@ -40,7 +40,7 @@ functions instead.
 
 ## This build: compiler matrix and batch permuter
 
-This repository (`LeonardoLimaMH/decomp.anything_New`) is decomp.anything with four additions for forks of
+This repository (`LeonardoLimaMH/decomp.anything_New`) is decomp.anything with five additions for forks of
 community decomps. They were built for a PlayStation project compiled with three GCC builds, and work for any
 fork that declares a matrix. The details are in [The compiler matrix](#the-compiler-matrix) and in
 `guide("matrix")`; this is the short version and how to run it.
