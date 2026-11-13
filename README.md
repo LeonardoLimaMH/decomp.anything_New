@@ -40,7 +40,7 @@ functions instead.
 
 ## This build: compiler matrix and batch permuter
 
-This repository (`LeonardoLimaMH/decomp.anything_New`) is decomp.anything with five additions for forks of
+This repository (`LeonardoLimaMH/decomp.anything_New`) is decomp.anything with six additions for forks of
 community decomps. They were built for a PlayStation project compiled with three GCC builds, and work for any
 fork that declares a matrix. The details are in [The compiler matrix](#the-compiler-matrix) and in
 `guide("matrix")`; this is the short version and how to run it.
@@ -52,6 +52,7 @@ fork that declares a matrix. The details are in [The compiler matrix](#the-compi
 | Strict verification and learning | A matrix hit counts only when the function's bytes and relocation identities are the original's (a jump inside the function is compared by where it lands). Recipes that verified for other functions of the same file are tried first. |
 | Batch permuter | Rewrites of a near miss that keep its meaning are compiled 24 at a time by one run of the matrix build. |
 | Self-contained attempts | A function brings its macros, type definitions and static helpers; a miss is remembered with them. |
+| The project's own C as a seed | A project that keeps C which behaves like the original without matching it yet names where (`"seeds"`). For a function with no C in its file, that is what the agent's brief shows instead of a machine draft, and what the matrix and its sweep compile. |
 
 ### How the batch permuter works
 
@@ -112,7 +113,20 @@ should be the ones of this repository's commit, with the app's process started a
 ### What a project declares
 
 In its `.decomp.wtf.json`, a `matrix` section with a build command that takes a job file and the compiler
-profiles (`guide("matrix")` has the format). Without it the app behaves as upstream's, except that a MIPS miss in a
+profiles, and optionally where it keeps functional C for unmatched functions (`guide("matrix")` has both formats):
+
+```json
+"seeds": ["equiv/{target}/{symbol}.c"],
+"matrix": {
+  "build": ["./run.sh", "python3", "tools/matrix_build.py", "{job}"],
+  "profiles": [{"name": "2.7.2-psx", "compiler": "GCC 2.7.2 PSX", "flags": "-O2 -G8"}, "2.8.1-psx"]
+}
+```
+
+On the PlayStation project this was built for, the seeds rarely match as they are (they are equivalent C, not
+matching C), but they compile in 85% of the matrix's cells and put a third of the functions they cover within
+10% of a match: a starting point for agents and the permuter where there was none.
+ Without it the app behaves as upstream's, except that a MIPS miss in a
 fork names its kinds of difference and a function may bring its macros, types and static helpers.
 
 ## Fork of decomp.wtf
