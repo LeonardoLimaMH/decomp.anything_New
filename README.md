@@ -38,6 +38,83 @@ functions instead.
   <img alt="Works with any MCP agent" src="https://img.shields.io/badge/agents-any%20MCP%20client-157a49?style=flat-square">
 </p>
 
+## This build: compiler matrix and batch permuter
+
+This repository (`LeonardoLimaMH/decomp.anything_New`) is decomp.anything with four additions for forks of
+community decomps. They were built for a PlayStation project compiled with three GCC builds, and work for any
+fork that declares a matrix. The details are in [The compiler matrix](#the-compiler-matrix) and in
+`guide("matrix")`; this is the short version and how to run it.
+
+| Addition | What it does |
+| --- | --- |
+| Compiler matrix | `compiler_matrix(function)` compiles one function's C under every compiler profile the project declares and five translation-unit contexts, and diffs each object against the original. A match the file's own build makes is committed; one that needs the build changed is saved with its recipe. |
+| Kinds of difference | A miss says what is left: GP-relative addressing, `%hi`/`%lo` splitting, delay slots, load delays, nops, register allocation, moved branch targets, apart from different code. When all of it is compiler-like, the matrix runs on its own. |
+| Strict verification and learning | A matrix hit counts only when the function's bytes and relocation identities are the original's (a jump inside the function is compared by where it lands). Recipes that verified for other functions of the same file are tried first. |
+| Batch permuter | Rewrites of a near miss that keep its meaning are compiled 24 at a time by one run of the matrix build. |
+| Self-contained attempts | A function brings its macros, type definitions and static helpers; a miss is remembered with them. |
+
+### How the batch permuter works
+
+A near miss that differs only in registers or instruction order usually comes down to how the C is written: the
+order of statements and declarations, a temporary, a cast, `register`, the form of a loop.
+
+1. It starts from the closest source the matrix has measured for the function, under the profile and context
+   where that source came closest.
+2. Each round makes up to 24 rewrites (`permuter.py`), places each one in the function's translation unit, and
+   hands all of them to the project's matrix build in one job. One process start compiles the round; in a fork,
+   the ordinary permuter wrote the file, built the unit and undid it for every single rewrite.
+3. Every object is diffed and verified. A rewrite that is closer becomes the new starting point (mostly downhill,
+   now and then sideways off a plateau).
+4. After 45 seconds, or at a match, the best rewrite goes through the whole matrix. That records it, verifies it,
+   and commits the match or saves its recipe. When nothing got closer, the answer says that what is left is not a
+   matter of order or casts.
+
+Ways to run it:
+
+- an agent: `compiler_matrix(function, permute=true)`;
+- the function panel: **Permute** (this function) and **Permute near misses** (every open function whose closest
+  cell differs in at most 10%, closest first, three turns each, in the background);
+- the API, from the machine the app runs on (open the `decomp url` address once for the cookie):
+
+```sh
+curl -b cookies -H "X-Decomp: 1" -H "Content-Type: application/json" \
+     -X POST http://127.0.0.1:6464/api/matrix/permute -d '{"slug": "<project>"}'            # all near misses
+curl -b cookies -H "X-Decomp: 1" -H "Content-Type: application/json" \
+     -X POST http://127.0.0.1:6464/api/matrix/sweep   -d '{"slug": "<project>"}'            # the matrix on every function that has C
+curl -b cookies "http://127.0.0.1:6464/api/matrix?slug=<project>"                           # progress and saved recipes
+```
+
+### Install and start this build
+
+The app is one Python package (`decompnet`) installed with `uv`. Install it from this repository's `main`, tell it
+where its updates come from, and restart it:
+
+```sh
+uv tool install --force --python 3.12 \
+   "decompnet @ https://github.com/LeonardoLimaMH/decomp.anything_New/archive/refs/heads/main.tar.gz"
+decomp install-info --channel branch --branch main --repo LeonardoLimaMH/decomp.anything_New \
+   --commit "$(git ls-remote https://github.com/LeonardoLimaMH/decomp.anything_New refs/heads/main | cut -f1)"
+decomp stop
+decomp url        # starts the app (port 6464) and prints the address that opens it
+```
+
+After `install-info`, `decomp update` and the app's own update prompt follow this repository instead of the
+upstream one. Without it they reinstall upstream's `main`, which has none of the above.
+
+On Windows with the app in WSL, run the same inside the distribution, e.g.
+`wsl -d decomp-wtf --exec /usr/local/bin/decomp url`. From a local checkout, replace the first command's
+argument with the checkout's path (copied into the distribution, with LF line endings).
+
+To check that the running app is this build, not an older process: `GET /api/matrix?slug=<project>` answers with
+a `permute` field only here, and the files under `~/.local/share/uv/tools/decompnet/lib/python3.12/site-packages/decompnet`
+should be the ones of this repository's commit, with the app's process started after they were installed.
+
+### What a project declares
+
+In its `.decomp.wtf.json`, a `matrix` section with a build command that takes a job file and the compiler
+profiles (`guide("matrix")` has the format). Without it the app behaves as upstream's, except that a MIPS miss in a
+fork names its kinds of difference and a function may bring its macros, types and static helpers.
+
 ## Fork of decomp.wtf
 
 decomp.anything is an independent fork of **[decomp.wtf](https://github.com/i12bp8/decomp.wtf)** by Sam Wolfs. The
