@@ -126,7 +126,8 @@ profiles, and optionally where it keeps functional C for unmatched functions (`g
 On the PlayStation project this was built for, the seeds rarely match as they are (they are equivalent C, not
 matching C), but they compile in 85% of the matrix's cells and put a third of the functions they cover within
 10% of a match: a starting point for agents and the permuter where there was none.
- Without it the app behaves as upstream's, except that a MIPS miss in a
+
+Without a `matrix` section the app behaves as upstream's, except that a MIPS miss in a
 fork names its kinds of difference and a function may bring its macros, types and static helpers.
 
 ## Fork of decomp.wtf
