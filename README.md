@@ -40,7 +40,7 @@ functions instead.
 
 ## This build: compiler matrix and batch permuter
 
-This repository (`LeonardoLimaMH/decomp.anything_New`) is decomp.anything with six additions for forks of
+This repository (`LeonardoLimaMH/decomp.anything_New`) is decomp.anything with these additions for forks of
 community decomps. They were built for a PlayStation project compiled with three GCC builds, and work for any
 fork that declares a matrix. The details are in [The compiler matrix](#the-compiler-matrix) and in
 `guide("matrix")`; this is the short version and how to run it.
@@ -53,6 +53,10 @@ fork that declares a matrix. The details are in [The compiler matrix](#the-compi
 | Batch permuter | Rewrites of a near miss that keep its meaning are compiled 24 at a time by one run of the matrix build. A project can have decomp-permuter write them (`"permute"` in its matrix); otherwise built-in rewrites are used. |
 | Self-contained attempts | A function brings its macros, type definitions and static helpers; a miss is remembered with them. |
 | The project's own C as a seed | A project that keeps C which behaves like the original without matching it yet names where (`"seeds"`). For a function with no C in its file, that is what the agent's brief shows instead of a machine draft, and what the matrix and its sweep compile. |
+| Jump tables checked | When the code matches, where each `switch` table entry lands is compared too: a `case` on the wrong block is not a match, and the agent is told which entry to move. |
+| What never becomes C | A project lists its hand-written assembly and libraries (`"not_c"`): those functions are tagged with the reason, never handed to agents, and filterable (Assembly, Library). |
+| Agents' verdict | `release_function(..., not_c=true)` with the evidence; when 3 agents of 2 models agree, the function is retired until you give it back. |
+| Queue order | You choose the order agents get functions in (not tried yet first, smallest, closest to matching...). |
 
 ### How the batch permuter works
 
