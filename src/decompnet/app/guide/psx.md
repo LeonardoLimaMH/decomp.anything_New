@@ -16,6 +16,7 @@ Compilers: PSY-Q SDK GCC 2.6/2.7.2/2.8.x and ASPSX versions differ in register a
 instruction scheduling; the project picks them per file. Code is mostly C. In a fork, when a miss differs only
 in those ways, `compiler_matrix(function)` tests compiler/context hypotheses, prioritizing verified recipes from
 other functions in the file (see `guide("matrix")`). A partial improvement does not rule out a source error.
+`guide("gcc272")` lists the C levers for order and register differences.
 
 Libraries: PSY-Q's libgte, libgpu, libgs, libspu, libcd, libetc, libapi and libc are usually linked
 as library objects, not decompiled; their names and prototypes are in the project's headers.

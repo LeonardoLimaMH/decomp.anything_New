@@ -37,6 +37,7 @@ GUIDES = {
     "mwcc": "matching Metrowerks CodeWarrior code (GameCube, Wii, DS)",
     "cpp": "decompiling C++: classes, vtables, constructors, inlines, name mangling",
     "psx": "matching PlayStation (PSY-Q GCC + maspsx) code",
+    "gcc272": "PSY-Q GCC 2.7.x/2.8.x at -O2: which C gives which order, registers, loops and switches",
     "ps2": "matching PlayStation 2 (EE-GCC, MWCC PS2) code",
     "arm": "ARM and Thumb (GBA, DS, 3DS): registers, conditional code, literal pools",
     "agbcc": "matching Game Boy Advance code built with agbcc",
@@ -51,7 +52,7 @@ GUIDES = {
 
 # Guides worth reading first on each platform.
 PLATFORM_GUIDES = {
-    "n64": ["mips"], "ps": ["mips", "psx"], "ps2": ["mips", "ps2"], "psp": ["mips"],
+    "n64": ["mips"], "ps": ["mips", "psx", "gcc272"], "ps2": ["mips", "ps2"], "psp": ["mips"],
     "gc": ["ppc", "mwcc", "cpp"], "wii": ["ppc", "mwcc", "cpp"], "nds": ["arm", "mwcc"], "3ds": ["arm", "cpp"],
     "gba": ["arm", "agbcc"], "switch": ["aarch64", "cpp"], "win32": ["x86", "cpp"], "xbox": ["x86", "cpp"],
     "xbox360": ["ppc", "cpp"], "windows": ["x86", "cpp"], "linux": ["x86", "cpp"],
