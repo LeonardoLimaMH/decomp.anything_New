@@ -16,6 +16,7 @@ import concurrent.futures
 import logging
 import os
 import random
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -146,7 +147,10 @@ class Permuter:
         fork = self.net.fork_slug(proj["slug"])
         rng = random.Random(f"{fn['id']}-{self._turns.get(fn['id'])}")
         try:
-            best_src = cur_src = fn["best_source"]
+            best_src = cur_src = self._fit(agent, proj, fn, fn["best_source"], fn["best_score"], fork)
+            if best_src is None:
+                self._turns[fn["id"]] = MAX_TURNS  # can't be placed in its file: leave it to agents
+                return
             best = cur = fn["best_score"]
             deadline = time.monotonic() + SECONDS
             batch_size = min(8, max(2, (os.cpu_count() or 4) - 2))
@@ -177,6 +181,26 @@ class Permuter:
                             cur, cur_src = score, cand_src
         finally:
             self._let_go(agent, fn)
+
+    def _fit(self, agent, proj, fn, source: str, best: int, fork: str | None) -> str | None:
+        """The best source as it can be placed in its file. A best attempt can carry a type its file now defines
+        differently (the file was synced from upstream after the attempt); every variant would then be refused
+        the same way. Such a type is renamed in the source (`T` -> `T_<function>`), which keeps the function's
+        code the same, until it places; None when it still can't."""
+        if not fork:
+            return source
+        for _ in range(6):
+            try:
+                self._score(agent, proj, fn, source, best, fork)
+                return source
+            except NetworkError as e:
+                m = re.search(r"already defines `(\w+)`, differently", str(e))
+                if not m:
+                    log.info("permuter: %s: %s", fn["name"], e)
+                    return None
+                name = m.group(1)
+                source = re.sub(rf"\b{re.escape(name)}\b", f"{name}_{fn['name'].rsplit('_', 1)[-1]}", source)
+        return None
 
     def _score(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         """A variant's score; recorded (as the function's best attempt, or its match) only when it beats `best`."""

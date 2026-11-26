@@ -4,6 +4,7 @@ PPC/x86 disassembly similarity, and autopilot velocity improvements."""
 from __future__ import annotations
 
 import random
+import re
 from unittest.mock import MagicMock
 
 from decompnet import compiler, permuter, similarity
@@ -156,3 +157,30 @@ def test_permuter_batch_execution(monkeypatch):
     p._permute(agent, {"slug": "test_game"}, {"id": 10, "name": "func_1"}, st)
     assert st.tried == 1
     assert st.current == "func_1"
+
+
+def test_permuter_renames_a_type_the_file_defines_differently():
+    """A best attempt whose type the (re-synced) file now defines differently is renamed until it places, instead
+    of every variant being refused the same way; a source that can't be placed for another reason is left."""
+    from decompnet.network import NetworkError
+
+    p = Permuter(MagicMock())
+    sent = []
+
+    def attempt(agent, fork, name, source, keep, quiet):
+        sent.append(source)
+        if re.search(r"\bS0E60\b", source):
+            raise NetworkError("src/x.c already defines `S0E60`, differently from the definition you sent with the "
+                               "function: use the file's, or change it with edit_file")
+        return {"score": 20}
+
+    p.net.forks.attempt.side_effect = attempt
+    src = "typedef struct { int a; } S0E60;\nint func_800A0E60(S0E60 *s) { return s->a; }\n"
+    fn = {"id": 1, "name": "func_800A0E60"}
+    fitted = p._fit(MagicMock(), {"slug": "g"}, fn, src, 20, "g-fork")
+    assert fitted == src.replace("S0E60", "S0E60_800A0E60")
+    assert len(sent) == 2
+
+    p.net.forks.attempt.side_effect = NetworkError("send the function definition, plus ...")
+    assert p._fit(MagicMock(), {"slug": "g"}, fn, src, 20, "g-fork") is None
+    assert p._fit(MagicMock(), {"slug": "g"}, fn, src, 20, None) == src
