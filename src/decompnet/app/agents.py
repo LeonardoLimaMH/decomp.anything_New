@@ -243,6 +243,16 @@ class Manager:
 
         threading.Thread(target=run, daemon=True, name=f"start-files-{slug}").start()
 
+    def model_of(self, agent) -> str | None:
+        """The model a helper session runs on (what share_knowledge counts as one opinion): the one it was started
+        with, else its CLI's default; None for an agent that isn't one of these sessions (the user's own)."""
+        name = getattr(agent, "name", agent)
+        s = next((x for x in list(self.sessions.values()) if x.agent_name == name), None)
+        if s is None:
+            return None
+        model = s.options.get("model") or (_config_model(s.kind) if s.kind != "api" else "") or ""
+        return model or s.kind
+
     def running(self) -> list[dict]:
         """The helpers that should keep working: resumed by the server after the app restarts."""
         return [
@@ -413,7 +423,14 @@ class Manager:
         topics = assistance.topics(ov)
         text += "\n" + tools._assistance_hint()
         text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + "\n\n".join(tools._guide(t) for t in topics)
-        if learned := self.net.learnings(s.slug):
+        knowledge = getattr(self.net, "knowledge", None)
+        if knowledge is not None and ov.get("kind") != "analysis":
+            # what two models agree on, and the open proposals another model can back (knowledge.py)
+            if known := knowledge.for_prompt(s.slug):
+                text += f"\n{known}\n"
+            text += ("\nSomething every agent on this game should know: share_knowledge (it reaches everyone once two "
+                     "models agree). Notes agents left before are in search_notes.\n")
+        elif learned := self.net.learnings(s.slug):
             text += (
                 "\nWhat agents learned on this project so far (compiler quirks, conventions; add yours with "
                 f"add_note and no function):\n{learned}\n"

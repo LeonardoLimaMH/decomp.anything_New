@@ -216,7 +216,8 @@ def render_rows(rows: list[tuple[str, str, str]], context: int = 2, max_rows: in
             prev = i
             k += 1
         if len(lines) >= max_rows and k < len(order):
-            lines.append(f"   ... ({len(rows) - prev - 1} more rows not shown: fix these first)")
+            lines.append(f"   ... ({len(rows) - prev - 1} more rows not shown: fix these first, or last_diff(function) "
+                         "shows them all without compiling)")
             break
     else:
         if prev != len(rows) - 1:

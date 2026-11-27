@@ -115,6 +115,11 @@ def test_near_miss_gets_a_diff_and_release_restores_the_best(fork):
     assert not first["matched"] and first["score"] and "TARGET" in first["text"]
     d = net.function_diff(slug, "count_alive_entities")
     assert d["kind"] == "latest" and 0 < d["percent"] < 100 and any(r[0] != " " for r in d["rows"])
+    # last_diff: every row of that compile again, with no compile
+    attempts = net.store.one("SELECT COUNT(*) AS n FROM attempts")["n"]
+    again = net.last_diff(agent, "count_alive_entities", slug)
+    assert "every differing row" in again and "TARGET" in again
+    assert net.store.one("SELECT COUNT(*) AS n FROM attempts")["n"] == attempts
     second = net.attempt(agent, "count_alive_entities", worse, slug)
     assert second["score"] is not None
     net.release(agent, "count_alive_entities", "testing release", slug)

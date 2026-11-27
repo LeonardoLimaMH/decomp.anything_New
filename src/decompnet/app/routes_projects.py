@@ -62,6 +62,16 @@ def register(ctx: ServerContext) -> None:
         out["sessions"] = [s for s in manager.snapshot(since) if s["slug"] == slug]
         return out
 
+    def p_knowledge(slug, request, data):
+        """What agents agree on (knowledge.py): the list; the user accepts or rejects a proposal, or sets whether
+        what two models agree on goes in by itself."""
+        if request.method == "POST":
+            if "auto" in data:
+                net.knowledge.set_auto(slug, bool(data["auto"]))
+            if data.get("id"):
+                net.knowledge.decide(slug, int(data["id"]), bool(data.get("accept")))
+        return net.knowledge.listing(slug)
+
     def p_compiler(slug, request, data):
         net.set_compiler(slug, str(data.get("toolchain", "")), data.get("flags") or None)
         return net.overview(slug)
@@ -286,6 +296,7 @@ def register(ctx: ServerContext) -> None:
         "/api/matrix/permute": (p_matrix_permute, ["POST"]),
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]),
+        "/api/knowledge": (p_knowledge, ["GET", "POST"]),
         "/api/claim_order": (p_claim_order, ["POST"]), "/api/function/give_back": (p_give_back, ["POST"]),
         "/api/focus": (p_focus, ["POST"]),
         "/api/analysis/task": (p_add_task, ["POST"]),

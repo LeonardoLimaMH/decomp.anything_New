@@ -367,10 +367,12 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "why_mismatch": lambda net, agent, slug, function: _why_mismatch(net, slug, function),
     "adopt_rea_names": lambda net, agent, slug: net.adopt_rea_names(agent, slug),
     "list_subsystems": lambda net, agent, slug, limit=12: net.subsystem_text(slug, limit),
-    "add_note": lambda net, agent, slug, text, function="": net.add_note(agent, slug, text, function or None),
+    "add_note": lambda net, agent, slug, text, function="": _add_note(net, agent, slug, text, function),
+    "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, int(supports or 0)),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
     "find_similar": lambda net, agent, slug, function, limit=5: net.find_similar(slug, function, limit),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
+    "last_diff": lambda net, agent, slug, function, context=2: net.last_diff(agent, function, slug, int(context or 0)),
     "guide": lambda net, agent, slug, topic="": _guide(topic),
     "read_file": lambda net, agent, slug, path, start=1, count=200: _read_file(net, slug, path, start, count),
     "search_code": lambda net, agent, slug, pattern, glob="": _search_code(net, slug, pattern, glob),
@@ -496,6 +498,21 @@ def _rea_hints(net: RomNetwork, slug: str, function: str, source: str, text: str
     if named:
         hints.append("REA names " + ", ".join(str(s) for s in named[:5]) + " in this function")
     return text + ("\n\n" + "\n".join(f"· {h}" for h in hints) if hints else "")
+
+
+def _add_note(net: RomNetwork, agent: Agent, slug: str, text: str, function: str = "") -> str:
+    """A note on one function, for the next agent on it. A note without one used to reach every new session's prompt
+    as "what agents learned", one model's guesses too: something every agent should know is a share_knowledge
+    proposal now, and reaches everyone once two models agree. (Analysis projects keep project-wide notes: findings.)"""
+    if not function.strip():
+        try:
+            analysis = net.is_analysis(net.project_row(slug))
+        except (NetworkError, AttributeError):
+            analysis = False
+        if not analysis:
+            raise NetworkError("add_note needs the function the note is for; something every agent on this game should "
+                               "know goes through share_knowledge (it reaches everyone once two models agree)")
+    return net.add_note(agent, slug, text, function or None)
 
 
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
@@ -756,8 +773,17 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def add_note(ctx: Context, text: str, function: str = "") -> str:
-        """Leave a note for other agents, on a function or the whole project."""
+        """Leave a note on a function for the next agent on it (what you tried, the cause of a difference). Something
+        every agent on this game should know goes through share_knowledge. (Analysis projects: any finding.)"""
         return await run(ctx, "add_note", text=text, function=function)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def share_knowledge(ctx: Context, text: str = "", supports: int = 0) -> str:
+        """Propose something every agent on this game should know (a convention, what a struct is, how the code is
+        organised, a pattern that makes a construct match), or back an open proposal with supports=its number when
+        you have seen it to be true yourself. It reaches every agent once helpers running two different models agree
+        (or the user accepts it). Not for which compiler built what: compiler_matrix settles that."""
+        return await run(ctx, "share_knowledge", text=text, supports=supports)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def search_notes(ctx: Context, query: str) -> str:
@@ -769,6 +795,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """Functions whose instructions look like this one's (copy-pasted code, the same inlined helper,
         template instances), matched ones first, with the matching source of the best one. Start there."""
         return await run(ctx, "find_similar", function=function, limit=limit)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def last_diff(ctx: Context, function: str, context: int = 2) -> str:
+        """Every differing row of your last compile_and_diff of `function`, where its answer was cut ("more rows not
+        shown"). Costs no compile and records nothing. context: equal rows shown around each difference (0-8)."""
+        return await run(ctx, "last_diff", function=function, context=context)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def guess_struct(ctx: Context, function: str, argument: str = "arg0") -> str:

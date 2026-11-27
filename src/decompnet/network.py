@@ -12,7 +12,9 @@ import json
 import re
 import secrets
 import sqlite3
+import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +82,39 @@ class Network:
         # every attempt records what its compile actually ran, and resolving that means path lookups; the answer
         # only changes when the project's config does, so it is remembered per (project, config)
         self._compiler_keys: dict[tuple, str] = {}
+        # (agent, project, function) -> every row of that agent's last compile_and_diff of it, for last_diff
+        self._last_rows: OrderedDict[tuple[int, int, str], tuple[list, str | None, bool]] = OrderedDict()
+        self._last_rows_lock = threading.Lock()
+
+    # ------------------------------------------------------------------ last_diff
+
+    def remember_rows(self, agent: Agent, project_id: int, function: str, rows: list, legend: str | None = None,
+                      matched: bool = False) -> None:
+        """Keep the whole diff of an agent's compile: compile_and_diff shows the first rows, last_diff all of them."""
+        with self._last_rows_lock:
+            key = (agent.id, project_id, function)
+            self._last_rows.pop(key, None)
+            self._last_rows[key] = ([tuple(r) for r in rows], legend, matched)
+            while len(self._last_rows) > 2000:
+                self._last_rows.popitem(last=False)
+
+    def last_diff(self, agent: Agent, function: str, project: str | None, context: int = 2) -> str:
+        """Every differing row of the agent's last compile_and_diff of `function`, with `context` equal rows around
+        each: what the compile's answer cut. No compile, nothing recorded."""
+        from .scoring import LEGEND, render_rows
+
+        proj = self._project(project)
+        fn = self._function(function, proj["slug"])
+        with self._last_rows_lock:
+            hit = self._last_rows.get((agent.id, proj["id"], fn["name"]))
+        if hit is None:
+            raise NetworkError(f"no compile_and_diff of {fn['name']} by you since the app started: compile it first")
+        rows, legend, matched = hit
+        if matched or not any(m != " " for m, _, _ in rows):
+            return f"Your last compile of {fn['name']} had no differing rows."
+        context = max(0, min(int(context), 8))
+        return f"Your last compile of {fn['name']}, every differing row:\n" + render_rows(
+            rows, context, max_rows=10**6, legend=legend or LEGEND)
 
     # ------------------------------------------------------------------ agents
 
@@ -533,6 +568,7 @@ class Network:
             fn["id"], agent.id,
         )
         self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, compiler=command)
+        self.remember_rows(agent, proj["id"], fn["name"], d.rows, matched=d.bytes_match)
 
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
@@ -941,6 +977,8 @@ class Network:
             for table in ("notes", "events", "context_versions", "functions", "symbols", "twin_misses", "experiments"):
                 db.execute(f"DELETE FROM {table} WHERE project_id=?", (proj["id"],))
             db.execute("DELETE FROM projects WHERE id=?", (proj["id"],))
+        if (knowledge := getattr(self, "knowledge", None)) is not None:
+            knowledge.forget(proj["id"])  # (its id may be a new project's later)
         return len(ids)
 
     def reset_function(self, slug: str, name: str) -> None:

@@ -376,6 +376,14 @@
             <p class="muted small" id="focusLine" hidden></p>
           </div>
         </section>
+        <section class="panel" id="knowPanel" hidden>
+          <header class="panel-head"><h2>What agents learned</h2><span class="muted small" id="knowState"></span></header>
+          <div class="pad">
+            <p class="muted small">Agents propose what every agent on this game should know; it reaches every agent once helpers running two different models back it. You can be the second opinion, or turn a proposal down.</p>
+            <label class="check inline"><input type="checkbox" id="knowAuto"><span>Add what two models agree on by itself</span></label>
+            <ul class="mini-list" id="knowList"></ul>
+          </div>
+        </section>
         <section class="panel">
           <header class="panel-head"><h2>Next in line</h2><span class="muted small">★ functions agents take first</span></header>
           <ol class="mini-list" id="prioList"></ol>

@@ -64,6 +64,13 @@ CREATE TABLE IF NOT EXISTS experiments(
   classes TEXT, error TEXT, created_at REAL);
 CREATE INDEX IF NOT EXISTS idx_experiments_fn ON experiments(function_id, id);
 CREATE INDEX IF NOT EXISTS idx_experiments_input ON experiments(function_id, input_hash);
+CREATE TABLE IF NOT EXISTS knowledge(
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open',
+  agent_id INTEGER, created_at REAL, decided_at REAL);
+CREATE TABLE IF NOT EXISTS knowledge_votes(
+  knowledge_id INTEGER NOT NULL, agent_id INTEGER NOT NULL, model TEXT NOT NULL, created_at REAL,
+  PRIMARY KEY(knowledge_id, agent_id));
+CREATE TABLE IF NOT EXISTS knowledge_settings(project_id INTEGER PRIMARY KEY, auto INTEGER NOT NULL);
 """
 
 # Columns added after the first release; applied in place to existing databases.

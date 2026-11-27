@@ -133,6 +133,9 @@ class RomNetwork(
 
         self.forks = ForkEngine(self)
         self.twins = Twins(self)
+        from .knowledge import Knowledge
+
+        self.knowledge = Knowledge(self)  # what agents agree on (share_knowledge)
         self.permuter = Permuter(self)
 
     def _require_budget(self, agent: Agent) -> None:

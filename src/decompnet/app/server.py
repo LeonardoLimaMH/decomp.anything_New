@@ -60,6 +60,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         settings.data["running_agents"] = running
         settings.save()
     manager.persist = remember
+    net.knowledge.model_of = manager.model_of  # share_knowledge counts models, not sessions
 
     ctx = ServerContext(net, home, port, secret, manager, jobs, settings, console)
     ctx.build_id = updates.running_id()  # which code this process is: the checkout's HEAD, or the installed commit

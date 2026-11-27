@@ -21,6 +21,8 @@ function eventHtml(ev) {
     case "link": return `<span class="ok">🔗</span> ${esc(d)} is linked: the game builds from its C, byte for byte`;
     case "release": return `${who} set ${fnLink(d)} aside, with notes for the next agent`;
     case "note": return `${who}: ${esc(d)}`;
+    case "proposal": return `${who} proposes something every agent should know: ${esc(d)}`;
+    case "knowledge": return `${who} and another model agree (${esc(d)}): What agents learned, on the Agents tab`;
     case "expired": return `${fnLink(d)} was left unfinished`;
     case "context": return `${who} updated ${ev.agent ? "shared code" : "context"}: ${esc(d)}`;
     case "rename": return `${who} renamed ${esc(d)}`;

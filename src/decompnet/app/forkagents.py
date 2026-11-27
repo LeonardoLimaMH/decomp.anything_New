@@ -524,6 +524,9 @@ class ForkAgentMixin:
             pct = d.match_percent if d.match_percent is not None else 0.0
             score = max(1, len(d.literals)) if d.literals else scaled(pct, fn["n_insns"])
             matched = d.matched
+            from ..forks.objdiff import LEGEND as OBJDIFF_LEGEND
+
+            self.net.remember_rows(agent, proj["id"], fn["name"], d.rows, OBJDIFF_LEGEND, matched)  # last_diff
             if not matched and not keep and not was_matched:  # tried, not kept: the file stays as it was
                 undo()
                 if quiet is None or score < quiet:

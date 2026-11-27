@@ -253,7 +253,41 @@ function renderSteering(ov) {
   $("spendLine").textContent = sp && sp.usd ? `· ${money(sp.usd)} spent${n ? ` · ${money(sp.usd / n)}/${unit}` : ""}`
     : sp && sp.tokens ? `· ${(sp.tokens / 1000).toFixed(0)}k tokens` : "";
   $("instrState").textContent = ov.instructions ? "agents get these" : "none yet";
+  renderKnowledge(ov);
 }
+/* What agents learned (app/knowledge.py): proposals two models agree on reach every agent. Fetched with the
+   project's overview, not on every poll. */
+async function renderKnowledge(ov, data) {
+  const panel = $("knowPanel");
+  if (!panel) return;
+  panel.hidden = ov && ov.kind === "analysis";
+  if (panel.hidden) return;
+  try { data = data || await api(`/api/knowledge?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
+  $("knowAuto").checked = !!data.auto;
+  const known = data.items.filter((i) => i.state === "accepted").length;
+  const open = data.items.length - known;
+  $("knowState").textContent = `${known} known${open ? ` · ${open} proposed` : ""}`;
+  $("knowList").innerHTML = data.items.length ? data.items.map((i) => `<li>
+      <span class="${i.state === "accepted" ? "" : "muted"}">#${i.id} ${esc(i.text)}</span>
+      <span class="muted small"> · ${i.state === "accepted" ? "every agent knows it" : i.agreed ? "two models agree" : "one model"}: ${esc(i.models.join(", "))}</span>
+      ${i.state === "accepted" ? `<button class="link-btn small" data-know="${i.id}" type="button">take back</button>`
+        : `<button class="link-btn small" data-know="${i.id}" data-accept="1" type="button">accept</button> <button class="link-btn small" data-know="${i.id}" type="button">reject</button>`}
+    </li>`).join("") : `<li class="muted small">Nothing proposed yet.</li>`;
+  $("knowList").querySelectorAll("[data-know]").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        const r = await api("/api/knowledge", { method: "POST", body: { slug: S.slug, id: Number(b.dataset.know), accept: !!b.dataset.accept } });
+        renderKnowledge(ov, r);
+      } catch (e) { toast(esc(e.message), "err"); }
+    };
+  });
+}
+$("knowAuto").onchange = async (e) => {
+  try {
+    const r = await api("/api/knowledge", { method: "POST", body: { slug: S.slug, auto: e.target.checked } });
+    renderKnowledge(S.ov, r);
+  } catch (err) { toast(esc(err.message), "err"); }
+};
 $("instrSave").onclick = async () => {
   try {
     S.ov = await api("/api/instructions", { method: "POST", body: { slug: S.slug, text: $("instrEdit").value } });
