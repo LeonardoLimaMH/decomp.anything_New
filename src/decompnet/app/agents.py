@@ -292,7 +292,15 @@ class Manager:
 
     def snapshot(self, since: dict | None = None) -> list[dict]:
         since = since or {}
-        return [s.snapshot(int(since.get(s.id, 0))) for s in self.sessions.values()]
+        out = []
+        accounts = getattr(self, "accounts", None)
+        for s in list(self.sessions.values()):
+            row = s.snapshot(int(since.get(s.id, 0)))
+            if accounts is not None and s.kind in aiaccounts.PROVIDERS:  # which account it runs on (AI accounts)
+                row["account"] = s.options.get("account") or aiaccounts.MAIN
+                row["account_label"] = accounts.display(s.kind, row["account"])
+            out.append(row)
+        return out
 
     def project_of(self, agent_id: int) -> str | None:
         return self.assignments.get(agent_id)

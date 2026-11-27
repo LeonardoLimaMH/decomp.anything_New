@@ -58,7 +58,7 @@ function renderSessions(sessions) {
     const dot = s.state === "error" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = ["starting", "working", "waiting"].includes(s.state);
     const b = board.get(s.agent);
-    const facts = [s.model ? esc(s.model) : "default model", s.runs ? `session ${s.runs}` : "", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
+    const facts = [s.model ? esc(s.model) : "default model", s.account_label ? `account: ${esc(s.account_label)}` : "", s.runs ? `session ${s.runs}` : "", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.started_at ? `since ${clock(s.started_at).slice(0, 5)}` : ""].filter(Boolean);
     return `<div class="session"><div class="session-top"><span class="dot ${dot}"></span><b>${esc(s.label)}</b>
         <span class="state ${s.state === "error" ? "err" : ""}">${esc(STATE_TEXT[s.state] || s.state)}</span>
@@ -88,7 +88,7 @@ $("stopAll").onclick = async () => {
 };
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
-const LZ = { kind: null, model: "", count: 1, per: null };
+const LZ = { kind: null, model: "", count: 1, per: null, account: "" };
 function launcherInit() {
   if (LZ.kind || !S.st) return;
   const l = S.st.settings.launcher || {};
@@ -129,6 +129,7 @@ async function startAgents(a, model, count, btn, extra = {}) {
     const options = { ...extra };
     if (model && a.id !== "api") options.model = model;
     if (LZ.per) options.per_session = LZ.per;
+    if (LZ.account && AI_KINDS.includes(a.id)) options.account = LZ.account;
     await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
     S.st.settings.launcher = { kind: a.id, model: model || "", count };
     if (model && a.id !== "api") {
@@ -140,6 +141,35 @@ async function startAgents(a, model, count, btn, extra = {}) {
     poll(false);
     loadNav();
   } catch (e) { toast(esc(e.message), "err"); } finally { if (btn) btn.disabled = false; }
+}
+
+/* Which account the agents run on (Agents page: AI accounts): automatic (the least busy with quota) or one. */
+const AI_KINDS = ["claude", "codex", "antigravity"];
+function aiAccountsCached(onLoad) {
+  const c = S.aiAcc;
+  if (c && Date.now() - c.at < 60000) return c.data;
+  if (!S.aiAccLoading) {
+    S.aiAccLoading = true;
+    api("/api/ai/accounts").then((d) => { S.aiAcc = { at: Date.now(), data: d }; onLoad && onLoad(); })
+      .catch(() => {}).finally(() => { S.aiAccLoading = false; });
+  }
+  return c ? c.data : null;
+}
+function accountLabel(a) {
+  const who = [a.name, a.email].filter(Boolean).join(" · ") || (a.main ? "main account" : `account ${a.id}`);
+  const out = a.quota_until && a.quota_until * 1000 > Date.now() ? ` (out of quota until ${clock(a.quota_until).slice(0, 5)})` : "";
+  return who + out;
+}
+function accountField(kind, box, compact) {
+  if (!AI_KINDS.includes(kind)) return "";
+  const data = aiAccountsCached(() => renderLauncher(box, compact));
+  const accs = ((data && data.kinds[kind]) || { accounts: [] }).accounts.filter((x) => x.signed_in);
+  if (accs.length < 2 && !LZ.account) return accs.length ? `<p class="muted small">Account: ${esc(accountLabel(accs[0]))}</p>` : "";
+  if (LZ.account && !accs.some((x) => x.id === LZ.account)) LZ.account = "";
+  return `<label class="field"><span>Account</span><select data-f="account">
+      <option value="">Automatic: the least busy account with quota</option>
+      ${accs.map((x) => `<option value="${esc(x.id)}" ${x.id === LZ.account ? "selected" : ""}>${esc(accountLabel(x))}${x.enabled ? "" : " — off for helpers"}</option>`).join("")}
+    </select></label>`;
 }
 
 function renderLauncher(box, compact = false) {
@@ -169,7 +199,8 @@ function renderLauncher(box, compact = false) {
     const known = opts.some((o) => o.id === LZ.model);
     body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${known && o.id === LZ.model ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}
         <option value="__other" ${known ? "" : "selected"}>Another model…</option></select></label>
-      <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${known ? "" : esc(LZ.model)}" ${known ? "hidden" : ""}>`;
+      <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${known ? "" : esc(LZ.model)}" ${known ? "hidden" : ""}>
+      ${accountField(a.id, box, compact)}`;
   }
   const ready = a.installed;
   box.innerHTML = `<div class="lz-kinds">${kinds}</div>
@@ -183,7 +214,9 @@ function renderLauncher(box, compact = false) {
     </div>`;
   wireCopies(box);
   const rerender = () => { renderLauncher(box, compact); if (box !== $("launcher") && S.tab === "agents") renderLauncher($("launcher")); };
-  box.querySelectorAll(".lz-kind").forEach((b) => { b.onclick = () => { LZ.kind = b.dataset.k; LZ.model = (S.st.settings.launcher || {}).kind === LZ.kind ? S.st.settings.launcher.model || "" : ""; rerender(); }; });
+  box.querySelectorAll(".lz-kind").forEach((b) => { b.onclick = () => { LZ.kind = b.dataset.k; LZ.account = ""; LZ.model = (S.st.settings.launcher || {}).kind === LZ.kind ? S.st.settings.launcher.model || "" : ""; rerender(); }; });
+  const accSel = box.querySelector('select[data-f="account"]');
+  if (accSel) accSel.onchange = () => { LZ.account = accSel.value; };
   const sel = box.querySelector('select[data-f="model"]'), custom = box.querySelector('[data-f="custom"]');
   const label = () => { const btn = box.querySelector('[data-act="start"]'); if (btn) btn.textContent = launchLabel(a, LZ.model, LZ.count); };
   if (sel) sel.onchange = () => { if (sel.value === "__other") { custom.hidden = false; custom.focus(); LZ.model = custom.value.trim(); } else { custom.hidden = true; LZ.model = sel.value; } label(); };

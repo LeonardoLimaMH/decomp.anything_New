@@ -90,8 +90,17 @@ def register(ctx: ServerContext) -> None:
         data = await body(request)
         kind, slug = str(data.get("kind", "")), str(data.get("slug", ""))
         given = data.get("options") or {}
-        options = {k: v for k, v in given.items() if k in ("model", "per_session")}
+        options = {k: v for k, v in given.items() if k in ("model", "per_session", "account", "auto_resume")}
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
+        if options.get("account") and kind in aiaccounts.PROVIDERS:  # an account picked in the launcher
+            acc = str(options["account"])
+            row = next((a for a in manager.accounts.list(kind) if a["id"] == acc), None)
+            if row is None or not row["signed_in"]:
+                return fail(ValueError(f"that {aiaccounts.PROVIDERS[kind].name} account isn't signed in: "
+                                       "sign it in on the Agents page first"))
+            options["account"] = acc
+        else:
+            options.pop("account", None)  # automatic: the least busy account with quota
         if not options.get("model") and (helper := (settings.data.get("helper_models") or {}).get(kind)):
             options["model"] = helper  # the model set for this agent on the Agents page (AI accounts)
         count = max(1, min(int(data.get("count", 1)), 8))

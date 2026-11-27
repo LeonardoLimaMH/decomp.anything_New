@@ -313,6 +313,15 @@ class Accounts:
             out["DECOMP_HOME"] = os.environ.get("DECOMP_HOME") or str(Path.home() / "Decomp")
         return out
 
+    def display(self, kind: str, account: str | None) -> str:
+        """How the page names an account: its name and e-mail ("work · me@x.com"), or what's known of it."""
+        account = account or MAIN
+        who = self._who.get((kind, account), (0, {}))[1] or {}  # never waits for a CLI: the last known
+        if not who and kind != "claude":
+            who = self.who(kind, account)
+        parts = [p for p in (self.name(kind, account), who.get("email")) if p]
+        return " · ".join(parts) or ("main account" if account == MAIN else f"account {account}")
+
     def label(self, kind: str, account: str | None) -> str:
         if named := self.name(kind, account or MAIN):
             return named
