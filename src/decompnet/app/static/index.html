@@ -603,6 +603,7 @@
         <span class="badge" id="fnStatus"></span>
         <button class="ghost small-btn pin" id="fnPin" type="button" title="Agents take this function next">★ Next</button>
         <button class="ghost small-btn" id="fnGiveBack" type="button" title="Agents agreed no C produces it; give it back to the queue" hidden>Give back</button>
+        <span id="fnDeep" hidden><select id="fnDeepMin" title="How long to search"><option value="5">5 min</option><option value="15" selected>15 min</option><option value="30">30 min</option><option value="60">60 min</option></select><button class="ghost small-btn" id="fnDeepGo" type="button" title="The permuter on this function alone, for longer: rewrites that keep the meaning (order, temporaries, casts…), judged like any attempt; a closer one becomes the best attempt">Search longer</button></span>
         <button class="ghost small-btn" id="fnConsole" type="button" title="Open this function in the RE console (REA: Ghidra pseudocode, flow graph, callers)" hidden>RE console</button>
         <button class="ghost icon" id="fnPrev" type="button" aria-label="Previous function" title="Previous function (K)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.3 2.7 11.4 3.8 7.2 8l4.2 4.2-1.1 1.1L5 8z"/></svg></button>
         <button class="ghost icon" id="fnNext" type="button" aria-label="Next function" title="Next function (J)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 2.7 4.6 3.8 8.8 8l-4.2 4.2 1.1 1.1L11 8z"/></svg></button>

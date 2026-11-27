@@ -159,6 +159,7 @@ async function refreshFn(first) {
     $("fnPin").classList.toggle("on", pinned);
     $("fnPin").textContent = pinned ? "★ Next (on)" : "★ Next";
     $("fnPin").onclick = () => togglePrio(d.name, !pinned).then(() => refreshFn(false));
+    renderDeep(d);
     $("fnGiveBack").hidden = d.status !== "unmatchable";
     $("fnGiveBack").onclick = async () => {
       try {
@@ -320,6 +321,42 @@ async function tryIt() {
   } finally { $("tryBtn").disabled = false; }
 }
 /* The function stays yours only while you're on it: give it back when you move on. */
+/* A deep search (app/permute.py, Permuter.deep): the permuter on one function, with the user's budget. */
+async function renderDeep(d, st) {
+  const box = $("fnDeep"), go = $("fnDeepGo");
+  if (!box) return;
+  const open = d.status !== "matched" && d.best != null && d.best > 0 && S.ov.kind !== "analysis";
+  try { st = st || await api(`/api/permute/deep?slug=${encodeURIComponent(S.slug)}`); } catch { st = {}; }
+  const running = st.state === "running";
+  box.hidden = !open && !(running && st.function === d.name);
+  go.textContent = running ? (st.function === d.name
+    ? `Searching… ${Math.ceil(st.left / 60)} min left · ${st.variants} rewrites · best ${st.best}` : `Searching ${st.function}…`) : "Search longer";
+  go.title = running ? "Stop the search" : go.title;
+  $("fnDeepMin").hidden = running;
+  go.onclick = async () => {
+    try {
+      const r = running
+        ? await api("/api/permute/deep", { method: "POST", body: { slug: S.slug, action: "stop" } })
+        : await api("/api/permute/deep", { method: "POST", body: { slug: S.slug, name: d.name, minutes: Number($("fnDeepMin").value) } });
+      if (!running) toast(`Searching ${esc(d.name)}'s rewrites for ${$("fnDeepMin").value} minutes; a closer one becomes its best attempt.`);
+      renderDeep(d, r);
+    } catch (e) { toast(esc(e.message), "err"); }
+  };
+  clearTimeout(S.deepPoll);
+  if (running && st.function === d.name) {
+    S.deepPoll = setTimeout(async () => {
+      if (!S.fnDetail || S.fnDetail.name !== d.name) return;
+      const now = await api(`/api/permute/deep?slug=${encodeURIComponent(S.slug)}`).catch(() => ({}));
+      if (now.state && now.state !== "running") {
+        toast(now.matched ? `${esc(d.name)} matches!` : now.state === "failed" ? esc(now.error || "The search failed.")
+          : now.improved ? `Closer: score ${now.before} → ${now.best} after ${now.variants} rewrites.` : `${now.variants} rewrites, none closer.`,
+          now.matched || now.improved ? "match" : "err");
+        refreshFn(false);
+      } else renderDeep(d, now);
+    }, 5000);
+  }
+}
+
 function giveBack(next) {
   if (S.myClaim && S.myClaim !== next && S.slug) {
     api("/api/release", { method: "POST", body: { slug: S.slug, name: S.myClaim } }).catch(() => {});

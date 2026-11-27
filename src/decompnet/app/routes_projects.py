@@ -62,6 +62,16 @@ def register(ctx: ServerContext) -> None:
         out["sessions"] = [s for s in manager.snapshot(since) if s["slug"] == slug]
         return out
 
+    def p_deep_permute(slug, request, data):
+        """A deep search of one function's rewrites with the user's budget (permute.py: Permuter.deep): start it
+        (name, minutes), stop it (action=stop), or see how it goes."""
+        if request.method == "POST":
+            if data.get("action") == "stop":
+                net.permuter.deep_stop(slug)
+            else:
+                net.permuter.deep(slug, str(data.get("name") or ""), float(data.get("minutes") or 10))
+        return net.permuter.deep_status(slug) or {}
+
     def p_knowledge(slug, request, data):
         """What agents agree on (knowledge.py): the list; the user accepts or rejects a proposal, or sets whether
         what two models agree on goes in by itself."""
@@ -297,6 +307,7 @@ def register(ctx: ServerContext) -> None:
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]),
         "/api/knowledge": (p_knowledge, ["GET", "POST"]),
+        "/api/permute/deep": (p_deep_permute, ["GET", "POST"]),
         "/api/claim_order": (p_claim_order, ["POST"]), "/api/function/give_back": (p_give_back, ["POST"]),
         "/api/focus": (p_focus, ["POST"]),
         "/api/analysis/task": (p_add_task, ["POST"]),

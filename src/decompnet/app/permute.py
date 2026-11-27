@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from .. import scoring
+from .. import permuter_local, scoring
 from ..forks import csource
 from ..network import NetworkError
 from ..permuter import mutate
@@ -52,12 +52,17 @@ class State:
     current: str = ""
     started_at: float = field(default_factory=time.time)
     stop: threading.Event = field(default_factory=threading.Event)
+    best: int | None = None  # the function's best score so far (a deep search shows it)
+    before: int | None = None
+    deadline: float = 0.0
+    error: str = ""
 
 
 class Permuter:
     def __init__(self, net):
         self.net = net
         self.jobs: dict[str, State] = {}
+        self.deeps: dict[str, State] = {}  # slug -> the user's deep search on one function
         self._turns: dict[int, int] = {}  # function id -> turns spent on it
 
     def status(self, slug: str) -> dict | None:
@@ -121,27 +126,77 @@ class Permuter:
             st.state = "stopped" if st.stop.is_set() else "done"
             st.current = ""
 
-    def _hold(self, agent, fn) -> bool:
+    def _hold(self, agent, fn, seconds: float = SECONDS, renew: bool = False) -> bool:
         now = time.time()
         with self.net.store.tx() as db:
             self.net._expire_claims(db)
+            if renew:
+                db.execute("UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=?",
+                           (now + min(seconds, 60) + 120, fn["id"], agent.id))
+                return True
             if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 return False
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + SECONDS + 120))
+            # (a long search renews its hold each minute: an app that stops leaves the function free soon after)
+            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + min(seconds, SECONDS) + 120))
         return True
+
+    # -- a deep search: one function, the user's budget
+    def deep(self, slug: str, function: str, minutes: float) -> dict:
+        """Search one function's rewrites for `minutes` (1 to 60), started by the user: the same rewrites, judge and
+        recording of a better attempt as the background permuter, with a bigger budget. One per project at a time."""
+        minutes = max(1.0, min(float(minutes), 60.0))
+        proj = self.net.project_row(slug)
+        fn = self.net._function(function, slug)
+        if fn["status"] == "matched":
+            raise NetworkError(f"{fn['name']} already matches")
+        if not fn["best_source"] or fn["best_score"] is None:
+            raise NetworkError(f"{fn['name']} has no attempt yet to start from: compile some C for it first")
+        if (cur := self.deeps.get(slug)) is not None and cur.state == "running":
+            raise NetworkError(f"a deep search is already running on {cur.current}: stop it first")
+        st = self.deeps[slug] = State()
+        st.current, st.best, st.deadline = fn["name"], fn["best_score"], time.time() + minutes * 60
+        st.before = fn["best_score"]
+        agent, _ = self.net.local_agent("permuter")
+
+        def run():
+            try:
+                self._permute(agent, proj, fn, st, seconds=minutes * 60, user=True)
+                st.state = "matched" if st.matched else "stopped" if st.stop.is_set() else "done"
+            except Exception as e:  # noqa: BLE001 the page says why
+                st.state, st.error = "failed", str(e)[:400]
+
+        threading.Thread(target=run, daemon=True, name=f"deep-permuter-{slug}").start()
+        return self.deep_status(slug) or {}
+
+    def deep_status(self, slug: str) -> dict | None:
+        st = self.deeps.get(slug)
+        if st is None:
+            return None
+        return {"state": st.state, "function": st.current, "variants": st.variants, "improved": st.improved,
+                "before": st.before, "best": st.best, "matched": bool(st.matched), "error": st.error,
+                "left": max(0, int(st.deadline - time.time())) if st.state == "running" else 0}
+
+    def deep_stop(self, slug: str) -> None:
+        if (st := self.deeps.get(slug)) is not None:
+            st.stop.set()
 
     def _let_go(self, agent, fn) -> None:
         with self.net.store.tx() as db:
             db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
 
-    def _permute(self, agent, proj, fn, st: State) -> None:
+    def _permute(self, agent, proj, fn, st: State, seconds: float = SECONDS, user: bool = False) -> None:
+        """One turn on one function: the local hypotheses first (permuter_local.py), then random rewrites until
+        `seconds` run out. `user`: started by the user for this function (a deep search), so it doesn't wait for
+        an agent's review of the function first."""
         from . import assistance
 
         proj = self.net.project_row(proj["slug"])
         fn = self.net._function(fn["name"], proj["slug"])
-        if not assistance.reviewed(self.net, proj, fn, permutation=True):
+        if not user and not assistance.reviewed(self.net, proj, fn, permutation=True):
             return
-        if not self._hold(agent, fn):
+        if not self._hold(agent, fn, seconds):
+            if user:
+                raise NetworkError(f"{fn['name']} is being worked on by an agent right now: try again when it's free")
             return
         st.current, st.tried = fn["name"], st.tried + 1
         fork = self.net.fork_slug(proj["slug"])
@@ -152,10 +207,30 @@ class Permuter:
                 self._turns[fn["id"]] = MAX_TURNS  # can't be placed in its file: leave it to agents
                 return
             best = cur = fn["best_score"]
-            deadline = time.monotonic() + SECONDS
+            st.best = best
+            started = time.monotonic()
+            deadline = started + seconds
             batch_size = min(8, max(2, (os.cpu_count() or 4) - 2))
             with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as pool:
+                # cheap ordering hypotheses before random drift; only the normal judge accepts one
+                local = permuter_local.variants(best_src, fn["name"]) if not st.stop.is_set() else []
+                if local:
+                    st.variants += len(local)
+                    futures = [pool.submit(self._score, agent, proj, fn, src, best, fork) for _, src in local]
+                    for (_, src), f in zip(local, futures, strict=False):
+                        score = f.result()
+                        if score is not None and score < best:
+                            best, best_src, cur, cur_src = score, src, score, src
+                            st.improved += 1
+                            st.best = best
+                            if score == 0:
+                                st.matched += 1
+                                log.info("permuter: %s matched (local hypothesis)", fn["name"])
+                                return
                 while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
+                    if user and time.monotonic() - started > 60:  # a long search keeps its hold on the function
+                        self._hold(agent, fn, deadline - time.monotonic(), renew=True)
+                        started = time.monotonic()
                     cands = []
                     for _ in range(batch_size):
                         cand = _mutate_function(cur_src if rng.random() < 0.85 else best_src, fn["name"], rng)
@@ -173,6 +248,7 @@ class Permuter:
                         if score < best:
                             best, best_src = score, cand_src
                             st.improved += 1
+                            st.best = best
                             if score == 0:
                                 st.matched += 1
                                 log.info("permuter: %s matched", fn["name"])
