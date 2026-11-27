@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse, Response
 
 from .. import hostenv, toolchains
 from ..network import NetworkError
-from . import agents, connect
+from . import agents, aiaccounts, connect
 from .agenttools import forget
 from .serverctx import (
     ServerContext,
@@ -92,6 +92,8 @@ def register(ctx: ServerContext) -> None:
         given = data.get("options") or {}
         options = {k: v for k, v in given.items() if k in ("model", "per_session")}
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
+        if not options.get("model") and (helper := (settings.data.get("helper_models") or {}).get(kind)):
+            options["model"] = helper  # the model set for this agent on the Agents page (AI accounts)
         count = max(1, min(int(data.get("count", 1)), 8))
         picked: list[str] = []
         try:
@@ -137,6 +139,57 @@ def register(ctx: ServerContext) -> None:
         if (host := hostenv.host_bridge()) is not None:  # the user's agents live outside decomp.anything's Linux
             return JSONResponse({"agents": [], "bridge": host, "host_bridge": host, **hostenv.info()})
         return JSONResponse({"agents": await anyio.to_thread.run_sync(rows), "bridge": connect.bridge_command()})
+
+    @mcp.custom_route("/api/ai/accounts", methods=["GET", "POST"])
+    async def api_ai_accounts(request: Request) -> Response:
+        """The accounts Claude Code, Codex and Antigravity helpers run on, and the model each one uses by default:
+        list them, sign one in (a new one, or again), paste the code a sign-in page gave, switch one on or off for
+        helpers, sign one out or remove it (its sessions stop), set the helpers' model."""
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        acc = manager.accounts
+        if request.method == "POST":
+            data = await body(request)
+            action, kind = str(data.get("action") or ""), str(data.get("kind") or "")
+            aid = str(data.get("id") or "") or None
+            try:
+                if action != "cancel" and action != "code" and kind not in aiaccounts.PROVIDERS:
+                    raise ValueError(f"accounts aren't managed for {kind!r}")
+                if action in ("add", "signin"):
+                    await anyio.to_thread.run_sync(lambda: acc.start_login(kind, None if action == "add" else aid))
+                elif action == "code":
+                    await anyio.to_thread.run_sync(lambda: acc.submit_code(str(data.get("code") or "")))
+                elif action == "cancel":
+                    acc.cancel_login()
+                elif action in ("enable", "disable") and aid:
+                    acc.set_enabled(kind, aid, action == "enable")
+                elif action == "remove" and aid:
+                    live = ("starting", "working", "waiting")
+                    for s in list(manager.sessions.values()):
+                        if s.kind == kind and (s.options.get("account") or aiaccounts.MAIN) == aid and s.state in live:
+                            manager.stop(s.id)
+                    await anyio.to_thread.run_sync(lambda: acc.remove(kind, aid))
+                elif action == "model":
+                    models = settings.data.setdefault("helper_models", {})
+                    model = str(data.get("model") or "").strip()
+                    if kind == "codex":
+                        model = model.lower()
+                    if model:
+                        models[kind] = model
+                    else:
+                        models.pop(kind, None)
+                    settings.save()
+                else:
+                    raise ValueError(f"unknown action {action!r}")
+            except (ValueError, OSError, subprocess.TimeoutExpired) as e:
+                return fail(e)
+
+        def listing():
+            return {k: {"name": p.name, "paste": p.paste, "accounts": acc.list(k),
+                        "model": (settings.data.get("helper_models") or {}).get(k, "")}
+                    for k, p in aiaccounts.PROVIDERS.items()}
+        return JSONResponse({"kinds": await anyio.to_thread.run_sync(listing),
+                             "login": acc.login.snapshot() if acc.login else None})
 
     @mcp.custom_route("/api/agents/token", methods=["POST"])
     async def api_agents_token(request: Request) -> Response:

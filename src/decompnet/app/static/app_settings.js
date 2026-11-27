@@ -322,8 +322,106 @@ function renderAgentsPage() {
       $("mcpHttp").textContent = JSON.stringify({ mcpServers: { decomp: { type: "http", url: t.url, headers: { Authorization: `Bearer ${t.token}` } } } }, null, 2);
     } catch (e) { toast(esc(e.message), "err"); }
   };
+  renderAiAccounts();
 }
 $("agRefresh").onclick = showAgentsPage;
+
+/* AI accounts: who Claude Code, Codex and Antigravity helpers run as, and the model each one uses. More accounts sign
+   in right here (the CLI's own sign-in, with a link and a code), and helper sessions are spread over the accounts
+   switched on. */
+async function renderAiAccounts(data) {
+  const box = $("aiBox");
+  if (!box) return;
+  try { data = data || await api("/api/ai/accounts"); } catch (e) { box.innerHTML = `<p class="muted small">${esc(e.message)}</p>`; return; }
+  const login = data.login && ["starting", "waiting", "checking"].includes(data.login.state) ? data.login : null;
+  const agentOf = (k) => (S.st.agents || []).find((a) => a.id === k) || { id: k, models: [] };
+  const plan = (a) => [a.plan && a.plan.toUpperCase(), a.until && `until ${a.until.slice(0, 10)}`].filter(Boolean).join(" · ");
+  const card = (k, a) => `<div class="ep-card" data-kind="${esc(k)}" data-acc="${esc(a.id)}">
+      <div class="ar-head"><b>${esc(a.signed_in ? (a.email || "signed in") : "not signed in")}</b>
+        <span class="muted small">${a.main ? "main: the app's own sign-in" : "added"}${plan(a) ? " · " + esc(plan(a)) : ""}</span></div>
+      <div class="row"><label class="check inline"><input type="checkbox" data-on ${a.enabled ? "checked" : ""} ${a.signed_in ? "" : "disabled"}><span>Use for helpers</span></label>
+        <span class="grow"></span>
+        <button class="ghost small-btn" data-signin type="button" ${login ? "disabled" : ""}>${a.signed_in ? "Sign in again" : "Sign in"}</button>
+        ${a.main ? (a.signed_in ? `<button class="ghost small-btn danger" data-remove type="button">Sign out</button>` : "")
+                 : `<button class="ghost small-btn danger" data-remove type="button">Remove</button>`}</div></div>`;
+  const loginBox = (k) => {
+    if (!login || login.kind !== k) return "";
+    const what = login.account === "main" ? "Signing the main account in again" : "Adding an account";
+    let steps = `<p class="muted small">Starting the sign-in…</p>`;
+    if (login.url && !login.paste) {
+      steps = `<p class="small">1. Open <a href="${esc(login.url)}" target="_blank" rel="noopener">the sign-in page</a> and sign in.</p>
+        <p class="small">2. Enter this code there (it expires in 15 minutes): <b class="mono">${esc(login.code || "…")}</b></p>
+        <p class="muted small">This page notices by itself when it's done.</p>`;
+    } else if (login.url) {
+      steps = `<p class="small">1. Open <a href="${esc(login.url)}" target="_blank" rel="noopener">the sign-in page</a> and sign in.</p>
+        <p class="small">2. Paste the code it shows you here${k === "antigravity" ? " (within a minute: Antigravity stops waiting after 60 seconds)" : ""}:</p>
+        <div class="lz-row"><input class="mono grow" data-code placeholder="code" ${login.state === "checking" ? "disabled" : ""}>
+          <button class="primary small-btn" data-send type="button" ${login.state === "checking" ? "disabled" : ""}>${login.state === "checking" ? "Checking…" : "Sign in"}</button></div>`;
+    }
+    return `<div class="ep-card"><div class="ar-head"><b>${what}</b></div>${steps}
+      <div class="row"><button class="ghost small-btn" data-cancel type="button">Cancel</button></div></div>`;
+  };
+  const section = (k, d) => {
+    const a = agentOf(k);
+    const opts = [{ id: "", name: a.default_model ? `CLI default · ${a.default_model}` : "CLI default" }, ...(a.models || [])];
+    if (d.model && !opts.some((o) => o.id === d.model)) opts.push({ id: d.model, name: d.model });
+    return `<div class="setup-group" data-sec="${esc(k)}">
+      <p class="col-title">${esc(d.name)}${a.installed === false ? ` <span class="muted small">(not installed)</span>` : ""}</p>
+      <label class="field"><span>Model for helpers</span><select data-model>${opts.map((o) => `<option value="${esc(o.id)}" ${o.id === (d.model || "") ? "selected" : ""}>${esc(o.name)}</option>`).join("")}
+        <option value="__other">Another model…</option></select></label>
+      <input data-model-other class="mono" placeholder="model name, as ${esc(d.name)} calls it" hidden>
+      ${d.accounts.map((acc) => card(k, acc)).join("")}
+      ${loginBox(k) || `<div class="row"><button class="ghost small-btn" data-add type="button" ${login || a.installed === false ? "disabled" : ""}>Add an account</button></div>`}
+      ${data.login && data.login.kind === k && data.login.state === "failed" ? `<p class="muted small">The last sign-in didn't finish: ${esc(data.login.error || "")}</p>` : ""}
+    </div>`;
+  };
+  box.innerHTML = `<p class="muted small">The accounts your helper agents run on. Add more and the sessions are spread over the ones switched on, so one account's usage limit doesn't stop the others. Sign-ins stay on this computer.</p>
+    ${Object.entries(data.kinds).map(([k, d]) => section(k, d)).join("")}`;
+  const act = async (body, said) => {
+    try {
+      const r = await api("/api/ai/accounts", { method: "POST", body });
+      if (said) toast(said);
+      renderAiAccounts(r);
+    } catch (e) { toast(esc(e.message), "err"); }
+  };
+  box.querySelectorAll("[data-acc]").forEach((c) => {
+    const kind = c.dataset.kind, id = c.dataset.acc;
+    c.querySelector("[data-on]").onchange = (ev) => act({ action: ev.target.checked ? "enable" : "disable", kind, id });
+    c.querySelector("[data-signin]").onclick = () => act({ action: "signin", kind, id });
+    const rm = c.querySelector("[data-remove]");
+    if (rm) rm.onclick = () => {
+      const ask = id === "main" ? "Sign this account out of the CLI on this computer? Its helper sessions stop." : "Remove this account from decomp.anything? Its helper sessions stop.";
+      if (confirm(ask)) act({ action: "remove", kind, id }, id === "main" ? "Signed out." : "Removed.");
+    };
+  });
+  box.querySelectorAll("[data-sec]").forEach((sec) => {
+    const kind = sec.dataset.sec;
+    const add = sec.querySelector("[data-add]"), cancel = sec.querySelector("[data-cancel]"), send = sec.querySelector("[data-send]");
+    if (add) add.onclick = () => act({ action: "add", kind });
+    if (cancel) cancel.onclick = () => act({ action: "cancel", kind });
+    if (send) send.onclick = () => act({ action: "code", kind, code: sec.querySelector("[data-code]").value });
+    const sel = sec.querySelector("[data-model]"), other = sec.querySelector("[data-model-other]");
+    sel.onchange = () => {
+      if (sel.value === "__other") { other.hidden = false; other.focus(); return; }
+      act({ action: "model", kind, model: sel.value }, "Helpers use this model from their next start.");
+    };
+    other.onchange = () => { if (other.value.trim()) act({ action: "model", kind, model: other.value.trim() }, "Helpers use this model from their next start."); };
+  });
+  clearTimeout(S.aiPoll);
+  if (login) {  // until the CLI has saved the sign-in, or it failed (a typed code is kept: no redraw without news)
+    const seen = JSON.stringify(data.login);
+    const tick = async () => {
+      if ($("agentsPage").hidden) return;
+      try {
+        const r = await api("/api/ai/accounts");
+        if (JSON.stringify(r.login) === seen) { S.aiPoll = setTimeout(tick, 3000); return; }
+        if (r.login && r.login.state === "done") toast("Signed in.", "match");
+        renderAiAccounts(r);
+      } catch { S.aiPoll = setTimeout(tick, 3000); }
+    };
+    S.aiPoll = setTimeout(tick, 3000);
+  }
+}
 
 /* ------------------------------------------------------------------ compilers & tools page */
 // Compilers are grouped by the console they target. Everything else used to share one "Tools" tab, which is how a

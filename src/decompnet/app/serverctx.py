@@ -234,7 +234,8 @@ class Settings:
                 "autopilot": self.data.get("autopilot", True), "budget_usd": self.data.get("budget_usd") or 0,
                 "auto_update": bool(self.data.get("auto_update")), "check_updates": self.data.get("check_updates", True) is not False,
                 "auto_update_rea": bool(self.data.get("auto_update_rea")),
-                "launcher": _launcher(self.data.get("launcher") or {}), "recent_models": self.data.get("recent_models") or {}}
+                "launcher": _launcher(self.data.get("launcher") or {}), "recent_models": self.data.get("recent_models") or {},
+                "helper_models": self.data.get("helper_models") or {}}
 
 
 def _session_options(entry: dict) -> dict:

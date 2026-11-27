@@ -103,7 +103,8 @@ function launcherInit() {
 }
 function modelOptions(a) {
   const recent = (S.st.settings.recent_models || {})[a.id] || [];
-  const opts = [{ id: "", name: a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
+  const set = (S.st.settings.helper_models || {})[a.id];  // the model picked on the Agents page (AI accounts)
+  const opts = [{ id: "", name: set || a.default_model ? `Default · ${set || a.default_model}` : "Default", note: "" }];
   for (const m of a.models || []) opts.push(m);
   for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
   return opts;

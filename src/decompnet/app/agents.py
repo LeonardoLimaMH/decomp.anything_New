@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 
 from ..network import NetworkError
-from . import tools
+from . import aiaccounts, tools
 from .agentparse import _args_brief, clean_stderr, parse_line
 from .agenttools import (
     _SIGNED_OUT,
@@ -150,6 +150,7 @@ class Session:
 class Manager:
     def __init__(self, net: RomNetwork, home: Path, mcp_url: str):
         self.net, self.home, self.mcp_url = net, home, mcp_url
+        self.accounts = aiaccounts.Accounts(home / "accounts", which=_which)  # Agents page: AI accounts
         self.sessions: dict[str, Session] = {}
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.Lock()
@@ -188,7 +189,20 @@ class Manager:
                     label = f"{name} #{k}"
                 else:
                     label = f"{KINDS[kind].name} #{n}"
-                s = Session(sid, kind, label, slug, sid, dict(options))
+                opts = dict(options)
+                if kind == "codex" and opts.get("model"):
+                    opts["model"] = str(opts["model"]).strip().lower()  # OpenAI's ids: "GPT-6.2-Sol" is refused
+                accounts = getattr(self, "accounts", None)
+                if accounts is not None and kind in aiaccounts.PROVIDERS and not opts.get("account"):
+                    busy: dict[str, int] = {}  # spread over the accounts switched on, the least busy first
+                    for x in self.sessions.values():
+                        if x.kind == kind and x.state in ("starting", "working", "waiting"):
+                            a = x.options.get("account") or aiaccounts.MAIN
+                            busy[a] = busy.get(a, 0) + 1
+                    opts["account"] = accounts.pick(kind, busy)
+                if accounts is not None and kind in aiaccounts.PROVIDERS and (who := accounts.label(kind, opts.get("account"))):
+                    label = f"{label} ({who})"
+                s = Session(sid, kind, label, slug, sid, opts)
                 self.sessions[sid] = s
                 threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{sid}").start()
                 ids.append(sid)
@@ -520,7 +534,7 @@ class Manager:
                 'approval_policy="never"',
             ]
             if model:
-                cmd += ["-m", model]
+                cmd += ["-m", model.strip().lower()]  # OpenAI's model ids are lower case: "GPT-6.2-Sol" is refused
             cmd.append("-")  # the prompt comes from stdin
         elif s.kind == "antigravity":
             # the workspace's own MCP config; tool permission comes from the user's rule for decomp's tools (AGY_ALLOW)
@@ -565,6 +579,10 @@ class Manager:
                 cmd += ["-m", model]
         else:
             raise RuntimeError(s.kind)
+        # the account this session runs on (Agents page: AI accounts); the main one is the CLI's own sign-in
+        accounts = getattr(self, "accounts", None)
+        if accounts is not None:
+            env.update(accounts.env(s.kind, s.options.get("account")))
         return argv(cmd), env, prompt
 
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
