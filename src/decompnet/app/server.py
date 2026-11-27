@@ -62,7 +62,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     manager.persist = remember
     net.knowledge.model_of = manager.model_of  # share_knowledge counts models, not sessions
     # when an account runs out of quota: another account of its provider, then another provider (AI accounts)
-    manager.quota_policy = lambda: {"account": True, "provider": True} | (settings.data.get("quota_failover") or {})
+    manager.quota_policy = lambda: agents.QUOTA_POLICY | (settings.data.get("quota_failover") or {})
     manager.helper_model = lambda kind: (settings.data.get("helper_models") or {}).get(kind)
 
     ctx = ServerContext(net, home, port, secret, manager, jobs, settings, console)

@@ -163,8 +163,10 @@ def register(ctx: ServerContext) -> None:
             aid = str(data.get("id") or "") or None
             try:
                 if action == "policy":  # what happens when an account runs out of quota
+                    standins = [str(k) for k in data.get("standins") or [] if str(k) in aiaccounts.PROVIDERS]
                     settings.data["quota_failover"] = {"account": bool(data.get("account", True)),
-                                                       "provider": bool(data.get("provider", True))}
+                                                       "provider": bool(data.get("provider")) and bool(standins),
+                                                       "standins": standins}
                     settings.save()
                 elif action != "cancel" and action != "code" and kind not in aiaccounts.PROVIDERS:
                     raise ValueError(f"accounts aren't managed for {kind!r}")

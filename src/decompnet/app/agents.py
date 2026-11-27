@@ -101,6 +101,10 @@ __all__ = [
 ]
 
 
+# When a helper's account runs out of quota (AI accounts): it carries on on another account of its provider; a helper
+# of another provider stands in only when the user turned that on AND ticked which providers may (none by default).
+QUOTA_POLICY = {"account": True, "provider": False, "standins": []}
+
 # Windows only: the agent gets its own process group, so Ctrl-C in the app doesn't reach it.
 CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
@@ -167,7 +171,9 @@ class Manager:
         self.persist = lambda running: None  # set by the server: remember helpers to resume after a restart
         # set by the server from its settings: what happens when an account runs out of quota (AI accounts), and
         # the model a provider's helpers use when one starts as a stand-in
-        self.quota_policy = lambda: {"account": True, "provider": True}
+        # (another provider never stands in unless the user turned it on and named which: starting another AI
+        # is the user's decision, never a side effect)
+        self.quota_policy = lambda: dict(QUOTA_POLICY)
         self.helper_model = lambda kind: None
 
     # -- control
@@ -306,8 +312,10 @@ class Manager:
                        f"(was {self.accounts.display(s.kind, old)})")
 
     def _other_kinds(self, kind: str) -> list[str]:
-        """Other providers whose CLI is installed here, the least used first."""
-        others = [k for k in aiaccounts.PROVIDERS if k != kind and _which(KINDS[k].command)]
+        """Other providers the user allowed to stand in (AI accounts) whose CLI is installed here, the least used
+        first."""
+        allowed = set((self.quota_policy() or {}).get("standins") or [])
+        others = [k for k in aiaccounts.PROVIDERS if k != kind and k in allowed and _which(KINDS[k].command)]
         live = {k: sum(1 for x in self.sessions.values() if x.kind == k and x.state in ("starting", "working", "waiting"))
                 for k in others}
         return sorted(others, key=lambda k: live[k])
@@ -365,7 +373,7 @@ class Manager:
         if s.options.get("standin_for"):  # a stand-in whose provider ran out too: the helper it stands in for waits
             s.state, s.error = "error", "its provider ran out of quota too"
             return False
-        if policy.get("provider", True) and not s.options.get("standin"):
+        if policy.get("provider") and not s.options.get("standin"):
             self._hand_over(s, agent)
         return self._wait_for_quota(s, account, until)
 

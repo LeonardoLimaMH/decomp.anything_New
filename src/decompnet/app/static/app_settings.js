@@ -385,15 +385,23 @@ async function renderAiAccounts(data) {
       ${data.login && data.login.kind === k && data.login.state === "failed" ? `<p class="muted small">The last sign-in didn't finish: ${esc(data.login.error || "")}</p>` : ""}
     </div>`;
   };
-  const pol = data.policy || { account: true, provider: true };
+  const pol = data.policy || { account: true, provider: false, standins: [] };
+  const standins = new Set(pol.standins || []);
   box.innerHTML = `<p class="muted small">The accounts your helper agents run on. Add more and the sessions are spread over the ones switched on, so one account's usage limit doesn't stop the others. Sign-ins stay on this computer.</p>
     <p class="col-title">When an account runs out of quota</p>
     <label class="check inline"><input type="checkbox" id="polAccount" ${pol.account ? "checked" : ""}><span>Its helpers carry on on another account of the same provider that has quota</span></label>
-    <label class="check inline"><input type="checkbox" id="polProvider" ${pol.provider ? "checked" : ""}><span>With none left, a helper of another provider with quota takes over the function until the quota comes back</span></label>
+    <label class="check inline"><input type="checkbox" id="polProvider" ${pol.provider ? "checked" : ""}><span>With none left, a helper of another provider takes over the function until the quota comes back: only the providers ticked here, never any other</span></label>
+    <div class="row" id="polStandins" ${pol.provider ? "" : "hidden"}>${Object.entries(data.kinds).map(([k, d]) => `<label class="small"><input type="checkbox" data-standin="${esc(k)}" ${standins.has(k) ? "checked" : ""}> ${esc(d.name)} may stand in</label>`).join(" ")}</div>
     ${Object.entries(data.kinds).map(([k, d]) => section(k, d)).join("")}`;
-  const setPolicy = () => act({ action: "policy", account: $("polAccount").checked, provider: $("polProvider").checked }, "Saved.");
+  const setPolicy = () => {
+    const picked = [...box.querySelectorAll("[data-standin]:checked")].map((x) => x.dataset.standin);
+    $("polStandins").hidden = !$("polProvider").checked;
+    if ($("polProvider").checked && !picked.length) return;  // waits for a provider to be ticked
+    act({ action: "policy", account: $("polAccount").checked, provider: $("polProvider").checked, standins: picked }, "Saved.");
+  };
   $("polAccount").onchange = setPolicy;
   $("polProvider").onchange = setPolicy;
+  box.querySelectorAll("[data-standin]").forEach((x) => { x.onchange = setPolicy; });
   const act = async (body, said) => {
     try {
       const r = await api("/api/ai/accounts", { method: "POST", body });

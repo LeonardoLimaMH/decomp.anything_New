@@ -107,6 +107,7 @@ def test_with_no_account_left_another_provider_stands_in_and_steps_back(tmp_path
     monkeypatch.setattr(aiaccounts, "identity", lambda kind, home, env=None, exe=None:
                         real(kind, home) if kind != "claude" else {"signed_in": True, "email": "c@example.com"})
     m.helper_model = lambda kind: "opus" if kind == "claude" else None
+    m.quota_policy = lambda: {"account": True, "provider": True, "standins": ["claude"]}  # the user allowed it
     sid = m.start("codex", "game", 1, {})[0]
     s = m.sessions[sid]
     s.state = "working"
@@ -193,8 +194,8 @@ def test_the_codex_cli_saying_usage_limit_is_out_of_quota(tmp_path, monkeypatch)
 def test_the_page_routes_for_the_policy_and_each_helper(app):  # noqa: F811
     client, _, manager, _ = app
     r = client.post("/api/ai/accounts", json={"action": "policy", "account": True, "provider": False}, headers=W)
-    assert r.status_code == 200 and r.json()["policy"] == {"account": True, "provider": False}
-    assert manager.quota_policy() == {"account": True, "provider": False}
+    assert r.status_code == 200 and r.json()["policy"] == {"account": True, "provider": False, "standins": []}
+    assert manager.quota_policy() == {"account": True, "provider": False, "standins": []}
     s = agents.Session("codex-7", "codex", "c", "game", "codex-7", {})
     manager.sessions["codex-7"] = s
     assert client.post("/api/agents/session", json={"id": "codex-7", "auto_resume": False}, headers=W).status_code == 200
