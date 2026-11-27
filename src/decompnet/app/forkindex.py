@@ -53,7 +53,7 @@ class ForkIndexMixin:
     def _remember(self, proj, fp: ForkProject, unit, d) -> None:
         if unit.target is None or not unit.target.exists():
             return
-        entry = {"mtime": unit.target.stat().st_mtime, "order": d.order, "ops": d.ops}
+        entry = {"mtime": unit.target.stat().st_mtime, "order": d.order, "ops": d.ops, "asm": d.insns}
         with self._ilock:
             idx = self._index_of(proj, fp)
             idx[unit.name] = entry
@@ -64,7 +64,7 @@ class ForkIndexMixin:
         if unit.target is None or not unit.target.exists():
             return None
         hit = idx.get(unit.name)
-        if hit and hit.get("mtime") == unit.target.stat().st_mtime:
+        if hit and hit.get("mtime") == unit.target.stat().st_mtime and "asm" in hit:  # (asm: since guess_struct)
             return hit
         row = self.net.store.one("SELECT meta FROM functions WHERE project_id=? AND unit=? LIMIT 1", proj["id"], unit.name)
         if row is None:
@@ -326,3 +326,46 @@ class ForkIndexMixin:
         with self.net.store.tx() as db:
             db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
 
+    def guess_struct(self, slug: str, function: str, argument: str = "arg0") -> str:
+        """guess_struct on a fork: the code is the target objects', as the look-alike index keeps it."""
+        from .. import structguess
+
+        proj, fp, _ = self.get(slug)
+        fn = self._fn(slug, function)
+        sym = self._meta(fn).get("symbol") or fn["name"]
+        try:
+            spec = structguess.Spec.of(argument)
+        except ValueError as e:
+            raise NetworkError(str(e)) from None
+        self._unit_index(proj, fp, fp.unit(fn["unit"]))
+        self.start_indexing(slug)  # the other units, in the background (kept by their objects' mtimes)
+        with self._ilock:
+            entries = [e for e in self._index_of(proj, fp).values() if isinstance(e, dict)]
+        asm: dict[str, list[str]] = {}
+        for e in entries:
+            asm.update(e.get("asm") or {})
+        if sym not in asm:
+            raise NetworkError(f"{sym}'s code isn't in its target object (objdiff couldn't read the unit)")
+        res = structguess.analyse(asm, sym, spec)
+        known: list[tuple[str, str]] = []
+        if not spec.chain and spec.root.startswith("arg"):
+            for f, how in sorted({(sym, spec.root)} | res.flows):
+                if not re.fullmatch(r"arg[0-3]", how):  # (not "arg0 (shared by many callers...)")
+                    continue
+                try:
+                    row = self._fn(slug, f)
+                except NetworkError:
+                    continue
+                if row["status"] != "matched":
+                    continue
+                src = self._current_source(fp, row)
+                typ = structguess.param_type(src or "", f, int(how[3:]))
+                if typ and (typ, f"{f}'s parameter {int(how[3:]) + 1}") not in known:
+                    known.append((typ, f"{f}'s parameter {int(how[3:]) + 1}"))
+        text = structguess.render(res, sym, argument, known)
+        have = sum(1 for e in entries if "asm" in e)
+        total = sum(1 for u in fp.units() if getattr(u, "target", None) is not None and u.target.exists())
+        if have < total:
+            text += (f"\n\n(The code of {have} of {total} source files was read so far; the rest is being read in the "
+                     "background: ask again later for callers and callees in them.)")
+        return text

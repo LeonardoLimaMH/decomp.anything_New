@@ -36,6 +36,27 @@ from .forkutil import (
 )
 
 
+def struct_args(asm: list[str]) -> list[str]:
+    """The arguments (arg0-arg3) a MIPS function reads or writes fields through, before it changes them: a struct
+    pointer handed in, which guess_struct can lay out."""
+    from ..structguess import parse
+
+    live, out = {"a0", "a1", "a2", "a3"}, []
+    for line in asm[:200]:
+        op, ops = parse(line)
+        if not op:
+            continue
+        for o in ops[1:]:
+            base = o.rsplit("(", 1)[-1].rstrip(")") if o.endswith(")") and "(" in o else None
+            if base in live and f"arg{base[1]}" not in out and op[:1] in ("l", "s") and op not in ("lui", "li"):
+                out.append(f"arg{base[1]}")
+        if op.startswith("jal"):
+            break  # past a call, a0-a3 are the callee's
+        if ops and ops[0] in live and op not in ("sw", "sh", "sb", "swc1") and not op.startswith("b"):
+            live.discard(ops[0])
+    return out
+
+
 class ForkAgentMixin:
     def info(self, slug: str) -> str:
         proj, fp, cfg = self.get(slug)
@@ -174,6 +195,10 @@ class ForkAgentMixin:
             if len(asm) > 500:
                 asm = [*asm[:500], f"... ({len(asm) - 500} more instructions)"]
             lines += [f"current state: {pct}", "", "### Target assembly", "```asm", *asm, "```"]
+            fields = struct_args(asm)
+            if fields:
+                lines.append("It reads fields through " + ", ".join(fields) + ": guess_struct(function, \""
+                             + fields[0] + "\") lays out the struct from every function the pointer reaches.")
             if d.literals:
                 lines += ["", d.literals_note()]
             elif d.match_percent is not None and not d.matched:

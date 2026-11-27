@@ -622,6 +622,33 @@ class RomNetwork(
         out.sort(key=lambda x: (x[0]["status"] != "matched", -x[1]))
         return out[:top]
 
+    def guess_struct(self, project: str | None, function: str, argument: str = "arg0") -> str:
+        """The likely struct behind one of a function's pointers, from the loads and stores of every function it
+        reaches (structguess.py). MIPS code: a fork's target objects, a ROM project's own listing."""
+        from .. import structguess
+
+        if fork := self.fork_slug(project):
+            return self.forks.guess_struct(fork, function, argument)
+        proj = self._project(project)
+        fn = self._function(function, proj["slug"])
+        try:
+            spec = structguess.Spec.of(argument)
+        except ValueError as e:
+            raise NetworkError(str(e)) from None
+        rows = self.store.all("SELECT name, asm, status, matched_source FROM functions WHERE project_id=? AND asm IS NOT NULL",
+                              proj["id"])
+        asm = {r["name"]: (r["asm"] or "").splitlines() for r in rows}
+        if not any(re.search(r"\bjr\s+\$?ra\b", line) for line in asm.get(fn["name"], [])):
+            raise NetworkError("guess_struct reads MIPS code (N64, PS1, PS2, PSP games); this function's isn't")
+        res = structguess.analyse(asm, fn["name"], spec)
+        known: list[tuple[str, str]] = []
+        sources = {r["name"]: r["matched_source"] for r in rows if r["status"] == "matched" and r["matched_source"]}
+        if not spec.chain and spec.root.startswith("arg"):
+            for f, how in sorted({(fn["name"], spec.root)} | res.flows):
+                if re.fullmatch(r"arg[0-3]", how) and f in sources and (typ := structguess.param_type(sources[f], f, int(how[3:]))):
+                    known.append((typ, f"{f}'s parameter {int(how[3:]) + 1}"))
+        return structguess.render(res, fn["name"], argument, known)
+
     def find_similar(self, project: str | None, function: str, limit: int = 5) -> str:
         if fork := self.fork_slug(project):
             return self.forks.find_similar(fork, function, limit)

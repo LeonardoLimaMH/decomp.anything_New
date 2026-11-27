@@ -83,6 +83,7 @@ class FunctionDiff:
     # them, but the game's link resolves names, so they're worth fixing before the code goes upstream
     renamed: list[tuple[str, str]] = field(default_factory=list)
     literals: list = field(default_factory=list)  # literals.Mismatch: constants that differ although the code matches
+    insns: dict[str, list[str]] = field(default_factory=dict)  # the unit's functions -> target instructions (guess_struct)
 
     @property
     def matched(self) -> bool:
@@ -188,6 +189,8 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
     order = [s["name"] for s in sorted(funcs, key=lambda s: int(s.get("address") or 0))]
     ops = {s["name"]: [r["instruction"]["formatted"].split(None, 1)[0] for r in s.get("instructions", [])
                        if r.get("instruction") and r["instruction"].get("formatted")] for s in funcs}
+    insns = {s["name"]: [r["instruction"]["formatted"] for r in s.get("instructions", [])
+                         if r.get("instruction") and r["instruction"].get("formatted")] for s in funcs}
     renamed = _renamed(data.get("left"), data.get("right"), lrows, rrows) if right is not None else []
     wrong = []
     if pct is not None and float(pct) >= 100.0 and symbol is not None and target is not None and base is not None and base.exists():
@@ -201,4 +204,4 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
             at += int(ins.get("size") or 4)
         wrong = literals.mismatches(target, base, symbol, insns)
     return FunctionDiff(symbol, float(pct) if pct is not None else None, rows, int(left.get("size", 0)), scores, order, ops,
-                        renamed, wrong)
+                        renamed, wrong, insns)

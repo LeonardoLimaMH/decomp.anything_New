@@ -370,6 +370,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "add_note": lambda net, agent, slug, text, function="": net.add_note(agent, slug, text, function or None),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
     "find_similar": lambda net, agent, slug, function, limit=5: net.find_similar(slug, function, limit),
+    "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
     "guide": lambda net, agent, slug, topic="": _guide(topic),
     "read_file": lambda net, agent, slug, path, start=1, count=200: _read_file(net, slug, path, start, count),
     "search_code": lambda net, agent, slug, pattern, glob="": _search_code(net, slug, pattern, glob),
@@ -768,6 +769,20 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """Functions whose instructions look like this one's (copy-pasted code, the same inlined helper,
         template instances), matched ones first, with the matching source of the best one. Start there."""
         return await run(ctx, "find_similar", function=function, limit=limit)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def guess_struct(ctx: Context, function: str, argument: str = "arg0") -> str:
+        """The likely struct behind one of a function's pointers (MIPS games), as C with offsets: from the loads
+        and stores of every function the same pointer reaches (callees it's passed to, callers that pass their own
+        argument on), with how many functions agree on each field, the other types a field is read as, where the
+        pointer flows, and the type matched code already uses for it.
+
+        Args:
+            function: the function whose pointer it is
+            argument: arg0-arg3, return (what it returns) or a global (D_80012345); add +0x14 to follow the
+                pointer stored at 0x14 (arg0+0x14+0x8 goes two steps)
+        """
+        return await run(ctx, "guess_struct", function=function, argument=argument)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def guide(ctx: Context, topic: str = "") -> str:

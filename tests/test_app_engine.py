@@ -162,6 +162,17 @@ def test_find_similar_on_the_rom(net):
     assert all(o.startswith(("Functions that look like", "No look-alikes")) for o in outs)
 
 
+def test_guess_struct_lays_out_the_demos_player(net):
+    """Demo Quest 64's Player (DAMAGE above): hp at 0x1C, invuln_timer at 0x20, state at 0x22, read through the
+    global D_8004AE34 by func_80000808 (and whatever else touches it)."""
+    text = net.guess_struct("demo-quest-64", "func_80000808", "D_8004AE34")
+    assert "/* 0x1C */ s32 unk_1C;" in text
+    assert "/* 0x20 */ s16 unk_20;" in text
+    assert "/* 0x22 */ s16 unk_22;" in text
+    with pytest.raises(NetworkError):
+        net.guess_struct("demo-quest-64", "func_80000808", "arg0+banana")
+
+
 def test_autopilot_matches_machine_drafts_for_free(net):
     import time
 
