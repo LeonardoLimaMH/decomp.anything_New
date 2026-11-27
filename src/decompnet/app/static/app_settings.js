@@ -347,6 +347,8 @@ async function renderAiAccounts(data) {
         <span class="muted small">${a.main ? "main: the app's own sign-in" : "added"}${plan(a) ? " · " + esc(plan(a)) : ""}</span>
         <button class="link-btn small" data-rename type="button" title="A name for this account, shown on its helpers">${a.name ? "rename" : "name it"}</button></div>
       <p class="muted small">${esc(used(a.usage))}</p>
+      ${a.quota_until ? `<p class="small"><span class="state err">out of quota until ${esc(clock(a.quota_until).slice(0, 5))}</span>
+        <button class="link-btn small" data-back type="button" title="Its quota is back already: helpers may use it again">it's back</button></p>` : ""}
       <div class="row"><label class="check inline"><input type="checkbox" data-on ${a.enabled ? "checked" : ""} ${a.signed_in ? "" : "disabled"}><span>Use for helpers</span></label>
         <span class="grow"></span>
         <button class="ghost small-btn" data-signin type="button" ${login ? "disabled" : ""}>${a.signed_in ? "Sign in again" : "Sign in"}</button>
@@ -383,8 +385,15 @@ async function renderAiAccounts(data) {
       ${data.login && data.login.kind === k && data.login.state === "failed" ? `<p class="muted small">The last sign-in didn't finish: ${esc(data.login.error || "")}</p>` : ""}
     </div>`;
   };
+  const pol = data.policy || { account: true, provider: true };
   box.innerHTML = `<p class="muted small">The accounts your helper agents run on. Add more and the sessions are spread over the ones switched on, so one account's usage limit doesn't stop the others. Sign-ins stay on this computer.</p>
+    <p class="col-title">When an account runs out of quota</p>
+    <label class="check inline"><input type="checkbox" id="polAccount" ${pol.account ? "checked" : ""}><span>Its helpers carry on on another account of the same provider that has quota</span></label>
+    <label class="check inline"><input type="checkbox" id="polProvider" ${pol.provider ? "checked" : ""}><span>With none left, a helper of another provider with quota takes over the function until the quota comes back</span></label>
     ${Object.entries(data.kinds).map(([k, d]) => section(k, d)).join("")}`;
+  const setPolicy = () => act({ action: "policy", account: $("polAccount").checked, provider: $("polProvider").checked }, "Saved.");
+  $("polAccount").onchange = setPolicy;
+  $("polProvider").onchange = setPolicy;
   const act = async (body, said) => {
     try {
       const r = await api("/api/ai/accounts", { method: "POST", body });
@@ -396,6 +405,8 @@ async function renderAiAccounts(data) {
     const kind = c.dataset.kind, id = c.dataset.acc;
     c.querySelector("[data-on]").onchange = (ev) => act({ action: ev.target.checked ? "enable" : "disable", kind, id });
     c.querySelector("[data-signin]").onclick = () => act({ action: "signin", kind, id });
+    const back = c.querySelector("[data-back]");
+    if (back) back.onclick = () => act({ action: "quota_back", kind, id }, "Helpers may use it again.");
     c.querySelector("[data-rename]").onclick = () => {
       const name = prompt("A name for this account (empty: none)", "");
       if (name !== null) act({ action: "rename", kind, id, name });

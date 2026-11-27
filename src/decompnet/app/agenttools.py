@@ -24,6 +24,14 @@ WIN = sys.platform == "win32"
 class Fatal(RuntimeError):
     """A helper can't work until the user changes something (shown as the helper's error, not retried)."""
 
+
+class OutOfQuota(RuntimeError):
+    """The helper's account has spent its usage allowance for now: until `until` (None: it didn't say)."""
+
+    def __init__(self, message: str, until: float | None):
+        super().__init__(message)
+        self.until = until
+
 @dataclass
 class Kind:
     id: str
@@ -149,6 +157,46 @@ def no_credit(said: str) -> str | None:
         return None
     return (f"the model's provider says the account is out of credit (\u201c{m.group(0)}\u201d): top it up, then "
             "start the agents again")
+
+# what a subscription says when its usage allowance is spent for now (Codex: "You've hit your usage limit ... try
+# again at 4:22 PM"; Antigravity: "Individual quota reached ... Resets in 2h48m11s"; Claude Code: "Claude AI usage
+# limit reached|1764273600", "5-hour limit reached · resets 3pm"): it works again later, on this account only
+_QUOTA = re.compile(r"hit your (?:usage )?limit|usage limit (?:reached|exceeded)|(?:individual |usage )?quota "
+                    r"(?:reached|exceeded|exhausted)|resource_exhausted|(?:5-hour|weekly|daily|session) limit reached|"
+                    r"out of (?:usage|messages)|usage limit", re.IGNORECASE)
+_RESET_IN = re.compile(r"(?:resets?|try again|available again)\s+in\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?|"
+                       r"seconds?|secs?|d|h|m|s)(?![a-z])[\s,]*(?:and\s+)?)+)", re.IGNORECASE)  # (2h48m11s, 3 hours)
+_RESET_AT = re.compile(r"(?:resets?|try again|available again)\s+(?:at\s+|after\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?\b",
+                       re.IGNORECASE)
+_RESET_EPOCH = re.compile(r"\|\s*(\d{10})\b")
+_UNIT = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+
+
+def quota_out(said: str, now: float | None = None) -> tuple[str, float | None] | None:
+    """(the provider's words, when the quota comes back as a time, or None when it doesn't say) when the account's
+    usage allowance is spent; None otherwise."""
+    if not (m := _QUOTA.search(said)):
+        return None
+    now = time.time() if now is None else now
+    line = next((ln.strip() for ln in said.splitlines() if _QUOTA.search(ln)), m.group(0))[:300]
+    if e := _RESET_EPOCH.search(said):
+        return line, float(e.group(1))
+    if r := _RESET_IN.search(said):
+        secs = sum(int(n) * _UNIT[u[0].lower()] for n, u in re.findall(r"(\d+)\s*([a-zA-Z]+)", r.group(1)))
+        if secs:
+            return line, now + secs
+    if r := _RESET_AT.search(said):
+        hour, minute, ampm = int(r.group(1)), int(r.group(2) or 0), (r.group(3) or "").lower().replace(".", "")
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        if hour < 24 and minute < 60 and (ampm or r.group(2)):
+            t = time.localtime(now)
+            at = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, hour, minute, 0, 0, 0, -1))
+            return line, at if at > now else at + 86400
+    return line, None
+
 
 # Claude Code's aliases always point at Anthropic's latest model of each kind.
 _versions: dict[str, tuple[float, str | None]] = {}

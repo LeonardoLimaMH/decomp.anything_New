@@ -42,12 +42,13 @@ function renderNow(claims) {
 }
 
 /* ------------------------------------------------------------------ agents on this project */
-const STATE_TEXT = { starting: "starting…", working: "working", waiting: "next session in a moment", stopped: "stopped", error: "stopped with an error" };
+const STATE_TEXT = { starting: "starting…", working: "working", waiting: "next session in a moment", stopped: "stopped", error: "stopped with an error", quota: "out of quota" };
+const LIVE = ["starting", "working", "waiting", "quota"];
 
 function renderSessions(sessions) {
   const box = $("sessions");
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
-  const running = sessions.filter((s) => ["starting", "working", "waiting"].includes(s.state));
+  const running = sessions.filter((s) => LIVE.includes(s.state));
   $("stopAll").hidden = running.length === 0;  // one agent needs it too, and the route stops every helper here
   const own = new Set(sessions.map((s) => s.agent));
   const outside = [...new Set(S.claims.filter((c) => !own.has(c.agent) && c.agent !== AUTO).map((c) => c.agent))];
@@ -56,7 +57,14 @@ function renderSessions(sessions) {
   const html = sessions.map((s) => {
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "error" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
-    const live = ["starting", "working", "waiting"].includes(s.state);
+    const live = LIVE.includes(s.state);
+    const byId = new Map(sessions.map((x) => [x.id, x]));
+    const quota = s.state === "quota"
+      ? `<span class="state err">out of quota until ${esc(clock(s.until).slice(0, 5))}${s.standin && byId.get(s.standin) && LIVE.includes(byId.get(s.standin).state) ? ` · ${esc(byId.get(s.standin).label)} carries on meanwhile` : ""}</span>
+         <button class="link-btn small" data-resume="${esc(s.id)}" type="button" title="Try again now">carry on now</button>` : "";
+    const standing = s.standin_for && byId.get(s.standin_for) ? `<span class="last">standing in for ${esc(byId.get(s.standin_for).label)}</span>` : "";
+    const auto = live && s.account && !s.standin_for
+      ? `<label class="small muted"><input type="checkbox" data-auto="${esc(s.id)}" ${s.auto_resume ? "checked" : ""}> carry on by itself when its quota comes back</label>` : "";
     const b = board.get(s.agent);
     const facts = [s.model ? esc(s.model) : "default model", s.account_label ? `account: ${esc(s.account_label)}` : "", s.runs ? `session ${s.runs}` : "", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.started_at ? `since ${clock(s.started_at).slice(0, 5)}` : ""].filter(Boolean);
@@ -65,7 +73,9 @@ function renderSessions(sessions) {
         <button class="ghost" data-stop="${esc(s.id)}" data-remove="${live ? "" : "1"}" type="button">${live ? "Stop" : "Remove"}</button></div>
       <span class="facts-line">${facts.join(" · ")}</span>
       ${s.state === "error" ? `<span class="state err">${esc(s.error)}</span>` : ""}
-      ${claim ? `<span class="last">on ${fnLink(claim.name)}</span>` : ""}</div>`;
+      ${quota}${standing}
+      ${claim ? `<span class="last">on ${fnLink(claim.name)}</span>` : ""}
+      ${auto}</div>`;
   }).join("") + outside.map((a) => `<div class="session ext"><div class="session-top"><span class="dot on"></span><b>${esc(a)}</b><span class="tag">${a.startsWith("@") ? "in the room" : "connected agent"}</span></div>
       <span class="last">on ${S.claims.filter((c) => c.agent === a).map((c) => fnLink(c.name)).join(", ")}</span></div>`).join("");
 
@@ -73,6 +83,15 @@ function renderSessions(sessions) {
   box._lastHtml = html;
   box.innerHTML = html;
   box.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
+  box.querySelectorAll("[data-auto]").forEach((c) => {
+    c.onchange = () => api("/api/agents/session", { method: "POST", body: { id: c.dataset.auto, auto_resume: c.checked } })
+      .then(() => toast(c.checked ? "It carries on by itself when its quota comes back." : "It waits for you when its quota comes back."))
+      .catch((e) => toast(esc(e.message), "err"));
+  });
+  box.querySelectorAll("[data-resume]").forEach((b) => {
+    b.onclick = () => api("/api/agents/session", { method: "POST", body: { id: b.dataset.resume, action: "resume" } })
+      .then(() => { toast("Trying again now."); poll(false); }).catch((e) => toast(esc(e.message), "err"));
+  });
   box.querySelectorAll("[data-stop]").forEach((b) => {
     b.onclick = async () => {
       await api("/api/agents/stop", { method: "POST", body: { id: b.dataset.stop, remove: !!b.dataset.remove } }).catch((e) => toast(esc(e.message), "err"));

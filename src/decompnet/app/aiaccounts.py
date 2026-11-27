@@ -235,11 +235,39 @@ class Accounts:
         off = set((self._state().get("off") or {}).get(kind) or [])
         busy = self.login if self.login and self.login.kind == kind and self.login.state not in ("done", "failed") else None
         return [{"id": a, "main": a == MAIN, "enabled": a not in off, "name": self.name(kind, a),
-                 "usage": self.usage(kind, a), **self.who(kind, a)}
+                 "usage": self.usage(kind, a), "quota_until": self.quota_until(kind, a), **self.who(kind, a)}
                 for a in self.ids(kind) if not (busy and busy.new and busy.account == a)]
 
     def usable(self, kind: str) -> list[str]:
-        return [a["id"] for a in self.list(kind) if a["enabled"] and a["signed_in"]]
+        """Accounts helpers can start on: switched on, signed in, and not out of quota."""
+        return [a["id"] for a in self.list(kind) if a["enabled"] and a["signed_in"] and not a["quota_until"]]
+
+    # -- quota: an account whose usage allowance is spent, until when
+    def quota_until(self, kind: str, account: str | None) -> float | None:
+        until = ((self._state().get("quota") or {}).get(kind) or {}).get(account or MAIN)
+        return float(until) if until and float(until) > time.time() else None
+
+    def mark_out(self, kind: str, account: str | None, until: float) -> None:
+        with self._lock:
+            data = self._state()
+            q = data.setdefault("quota", {}).setdefault(kind, {})
+            q[account or MAIN] = until
+            for a in [a for a, t in q.items() if float(t) <= time.time()]:  # what came back is forgotten
+                q.pop(a, None)
+            self._save_state(data)
+
+    def mark_back(self, kind: str, account: str | None) -> None:
+        with self._lock:
+            data = self._state()
+            if ((data.get("quota") or {}).get(kind) or {}).pop(account or MAIN, None) is not None:
+                self._save_state(data)
+
+    def with_quota(self, kind: str, busy: dict[str, int], exclude: str | None = None) -> str | None:
+        """Another account of `kind` that can take a session now (switched on, signed in, with quota), the least
+        busy first; None when there is none."""
+        order = self.ids(kind)
+        left = [a for a in self.usable(kind) if a != (exclude or None)]
+        return min(left, key=lambda a: (busy.get(a, 0), order.index(a))) if left else None
 
     def set_enabled(self, kind: str, account: str, on: bool) -> None:
         if account not in self.ids(kind):

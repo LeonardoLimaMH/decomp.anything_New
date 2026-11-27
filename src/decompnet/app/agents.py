@@ -39,6 +39,7 @@ from .agenttools import (
     WIN,
     Fatal,
     Kind,
+    OutOfQuota,
     _codex_config,
     _config_model,
     _which,
@@ -51,6 +52,7 @@ from .agenttools import (
     major,
     models,
     no_credit,
+    quota_out,
     search_path,
     signin,
     version,
@@ -124,6 +126,8 @@ class Session:
     tokens: int = 0
     signed_out: bool = False  # the agent CLI isn't signed in: trying again won't help
     throttled: bool = False  # the last run ended on the provider's limit of requests at once: not a failure
+    until: float = 0.0  # out of quota: when its account's allowance comes back (state "quota")
+    resume: threading.Event = field(default_factory=threading.Event)  # "carry on now", from the page
 
     def push(self, kind: str, text: str) -> None:
         self.seq += 1
@@ -143,6 +147,10 @@ class Session:
             "model": self.options.get("model") or "",
             "usd": round(self.usd, 4),
             "tokens": self.tokens,
+            "until": self.until if self.state == "quota" else 0,
+            "auto_resume": self.options.get("auto_resume", True) is not False,
+            "standin": self.options.get("standin") or "",
+            "standin_for": self.options.get("standin_for") or "",
             "feed": [f for f in self.feed if f["seq"] > since],
         }
 
@@ -157,6 +165,10 @@ class Manager:
         self._prep: dict[str, threading.Event] = {}  # slug -> giving its code source files before agents claim
         self.on_stop = lambda: None  # set by the server: close tunnels when the app quits
         self.persist = lambda running: None  # set by the server: remember helpers to resume after a restart
+        # set by the server from its settings: what happens when an account runs out of quota (AI accounts), and
+        # the model a provider's helpers use when one starts as a stand-in
+        self.quota_policy = lambda: {"account": True, "provider": True}
+        self.helper_model = lambda kind: None
 
     # -- control
 
@@ -257,17 +269,151 @@ class Manager:
 
     def running(self) -> list[dict]:
         """The helpers that should keep working: resumed by the server after the app restarts."""
+        # (a stand-in isn't: the helper it stands in for resumes, and hands over again if it has to)
         return [
-            {"kind": s.kind, "slug": s.slug, "options": {k: v for k, v in s.options.items() if k != "api_key"}}
-            for s in self.sessions.values()
-            if s.state in ("starting", "working", "waiting") and not s.stop.is_set()
+            {"kind": s.kind, "slug": s.slug,
+             "options": {k: v for k, v in s.options.items() if k not in ("api_key", "standin")}}
+            for s in list(self.sessions.values())
+            if s.state in ("starting", "working", "waiting", "quota") and not s.stop.is_set()
+            and not s.options.get("standin_for")
         ]
 
+    # -- out of quota: another account, another provider, or wait for it to come back
+    QUOTA_UNKNOWN = 15 * 60  # when the provider doesn't say when the quota comes back: look again this much later
+
+    def _busy(self, kind: str) -> dict[str, int]:
+        busy: dict[str, int] = {}
+        for x in list(self.sessions.values()):
+            if x.kind == kind and x.state in ("starting", "working", "waiting"):
+                a = x.options.get("account") or aiaccounts.MAIN
+                busy[a] = busy.get(a, 0) + 1
+        return busy
+
+    def _held_function(self, agent_id: int) -> str | None:
+        row = self.net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? "
+                                 "ORDER BY c.claimed_at DESC LIMIT 1", agent_id)
+        return row["name"] if row else None
+
+    def _switch_account(self, s: Session, account: str) -> None:
+        """Carry on on another account of the same provider (the next run gets its folder)."""
+        old = s.options.get("account") or aiaccounts.MAIN
+        s.options["account"] = account
+        base = re.sub(r" \([^()]*\)$", "", s.label)
+        who = self.accounts.label(s.kind, account)
+        s.label = f"{base} ({who})" if who else base
+        self.accounts.record(s.kind, account, session=True)
+        s.push("info", f"carrying on on {self.accounts.display(s.kind, account)} "
+                       f"(was {self.accounts.display(s.kind, old)})")
+
+    def _other_kinds(self, kind: str) -> list[str]:
+        """Other providers whose CLI is installed here, the least used first."""
+        others = [k for k in aiaccounts.PROVIDERS if k != kind and _which(KINDS[k].command)]
+        live = {k: sum(1 for x in self.sessions.values() if x.kind == k and x.state in ("starting", "working", "waiting"))
+                for k in others}
+        return sorted(others, key=lambda k: live[k])
+
+    def _hand_over(self, s: Session, agent) -> bool:
+        """Start a helper of another provider with quota in this one's place, on the function it was on, until this
+        one's quota comes back (then this one carries on and the stand-in stops). False when none can."""
+        for kind in self._other_kinds(s.kind):
+            account = self.accounts.with_quota(kind, self._busy(kind))
+            if account is None:
+                continue
+            opts = {"account": account, "standin_for": s.id, "per_session": s.options.get("per_session", PER_SESSION)}
+            if model := self.helper_model(kind):
+                opts["model"] = model
+            if fn := s.options.pop("resume_function", None):
+                opts["resume_function"] = fn
+            with self.net.store.tx() as db:  # its function goes with the stand-in
+                db.execute("DELETE FROM claims WHERE agent_id=?", (agent.id,))
+            sid = self.start(kind, s.slug, 1, opts)[0]
+            s.options["standin"] = sid
+            stand = self.sessions[sid]
+            s.push("info", f"{stand.label} carries on in its place until the quota comes back"
+                           + (f", from {fn}" if fn else ""))
+            stand.push("info", f"standing in for {s.label}, whose account is out of quota")
+            return True
+        return False
+
+    def _end_standin(self, s: Session) -> None:
+        """This helper carries on itself: its stand-in stops, and the function it was on comes back here."""
+        sid = s.options.pop("standin", None)
+        stand = self.sessions.get(sid) if sid else None
+        if stand is None:
+            return
+        agent, _ = self.net.local_agent(stand.agent_name)
+        if fn := self._held_function(agent.id):
+            s.options["resume_function"] = fn
+        self.stop(sid)
+        s.push("info", f"its quota is back: {stand.label} stops"
+                       + (f", and this one carries on with {s.options['resume_function']}" if fn else ""))
+
+    def _out_of_quota(self, s: Session, agent, e: OutOfQuota) -> bool:
+        """The session's account ran out of quota. True: carry on (on another account, or now that it came back);
+        False: stop (stopped by the user, or a stand-in whose own provider ran out too)."""
+        account = s.options.get("account") or aiaccounts.MAIN
+        until = e.until or time.time() + self.QUOTA_UNKNOWN
+        self.accounts.mark_out(s.kind, account, until)
+        s.push("error", f"{self.accounts.display(s.kind, account)} is out of quota until "
+                        f"{time.strftime('%H:%M', time.localtime(until))}{'' if e.until else ' (about: it did not say)'}: {e}")
+        if fn := self._held_function(agent.id):
+            s.options["resume_function"] = fn
+        policy = self.quota_policy() or {}
+        if policy.get("account", True) and (other := self.accounts.with_quota(s.kind, self._busy(s.kind), exclude=account)):
+            self._switch_account(s, other)
+            return True
+        if s.options.get("standin_for"):  # a stand-in whose provider ran out too: the helper it stands in for waits
+            s.state, s.error = "error", "its provider ran out of quota too"
+            return False
+        if policy.get("provider", True) and not s.options.get("standin"):
+            self._hand_over(s, agent)
+        return self._wait_for_quota(s, account, until)
+
+    def _wait_for_quota(self, s: Session, account: str, until: float) -> bool:
+        """Wait in state "quota" until the quota comes back (when the session carries on by itself), another account
+        of its provider can take it, or the user says "now"."""
+        s.state, s.until = "quota", until
+        s.resume.clear()
+        while not s.stop.is_set():
+            if s.resume.is_set():
+                s.push("info", "carrying on now, as asked")
+                break
+            now = time.time()
+            if now >= s.until and s.options.get("auto_resume", True) is not False:
+                s.push("info", "the quota should be back: carrying on")
+                break
+            policy = self.quota_policy() or {}
+            if policy.get("account", True) and (other := self.accounts.with_quota(s.kind, self._busy(s.kind), exclude=account)):
+                self._switch_account(s, other)  # an account added, signed in or come back meanwhile
+                break
+            s.resume.wait(min(30.0, max(1.0, s.until - now)))
+        if s.stop.is_set():
+            return False
+        s.until = 0.0
+        self._end_standin(s)
+        return True
+
+    def resume_now(self, sid: str) -> None:
+        if (s := self.sessions.get(sid)) is not None:
+            s.resume.set()
+
+    def set_auto_resume(self, sid: str, on: bool) -> None:
+        if (s := self.sessions.get(sid)) is not None:
+            s.options["auto_resume"] = bool(on)
+            if on and s.state == "quota" and time.time() >= s.until:
+                s.resume.set()  # its quota is already back
+            self.persist(self.running())
+
     def stop(self, sid: str | None = None) -> None:
-        """Stop one helper (for good) or all of them (the app is quitting: they resume next time)."""
+        """Stop one helper (for good) or all of them (the app is quitting: they resume next time). A helper's
+        stand-in (another provider's helper doing its work while it's out of quota) stops with it."""
+        standins = []
         for s in list(self.sessions.values()):
             if sid in (None, s.id):
                 s.stop.set()
+                s.resume.set()  # (wakes a helper waiting for its quota)
+                if sid is not None and (stand := s.options.get("standin")) and stand != sid:
+                    standins.append(stand)
                 if s.proc and s.proc.poll() is None:
                     _terminate(s.proc)
                 if s.http is not None:  # a local model can take minutes to answer: don't wait for it
@@ -275,6 +421,8 @@ class Manager:
                         s.http.close()
                 if s.state != "error":
                     s.state = "stopped"
+        for stand in standins:
+            self.stop(stand)
         if sid is not None:
             self.persist(self.running())
         if (accounts := getattr(self, "accounts", None)) is not None:
@@ -381,6 +529,11 @@ class Manager:
             except Fatal as e:  # needs the user first: retrying can't help
                 s.state, s.error = "error", str(e)
                 break
+            except OutOfQuota as e:  # this account's allowance is spent: another account or provider, or wait
+                if self._out_of_quota(s, agent, e):
+                    failures = 0
+                    continue
+                break
             except Exception as e:  # noqa: BLE001 keep the runner alive; show what happened
                 s.push("error", f"{type(e).__name__}: {e}")
                 ok = False
@@ -451,6 +604,9 @@ class Manager:
             )
         if facts := self.net.intake_line(s.slug):
             text += f"\n{facts}\n"
+        if fn := s.options.pop("resume_function", None):  # carried over from a session that ran out of quota
+            text += (f"\nFirst, carry on with {fn}, where the previous session on this project stopped (its account "
+                     f"ran out of quota): claim_function(\"{fn}\") and work from its best attempt and notes.\n")
         if wish := self.net.instructions(s.slug):
             text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
         if roots := self.net.references(s.slug):
@@ -692,6 +848,8 @@ class Manager:
             raise Fatal(refused)  # every retry would be refused the same way
         if code != 0 and not s.stop.is_set() and (why := no_credit(" ".join([*said, *errors]))):
             raise Fatal(why)  # every agent on this account fails the same way until it's topped up
+        if code != 0 and not s.stop.is_set() and (out := quota_out("\n".join([*said, *errors]))):
+            raise OutOfQuota(*out)  # this account's allowance is spent for now: another account, or wait for it
         if code != 0 and not s.stop.is_set() and _THROTTLED.search(" ".join([*said, *errors])):
             s.throttled = True
         if code != 0 and not s.stop.is_set() and _SIGNED_OUT.search(" ".join([*said, *errors])):

@@ -162,9 +162,15 @@ def register(ctx: ServerContext) -> None:
             action, kind = str(data.get("action") or ""), str(data.get("kind") or "")
             aid = str(data.get("id") or "") or None
             try:
-                if action != "cancel" and action != "code" and kind not in aiaccounts.PROVIDERS:
+                if action == "policy":  # what happens when an account runs out of quota
+                    settings.data["quota_failover"] = {"account": bool(data.get("account", True)),
+                                                       "provider": bool(data.get("provider", True))}
+                    settings.save()
+                elif action != "cancel" and action != "code" and kind not in aiaccounts.PROVIDERS:
                     raise ValueError(f"accounts aren't managed for {kind!r}")
-                if action in ("add", "signin"):
+                if action == "policy":
+                    pass  # (saved above)
+                elif action in ("add", "signin"):
                     await anyio.to_thread.run_sync(lambda: acc.start_login(kind, None if action == "add" else aid))
                 elif action == "code":
                     await anyio.to_thread.run_sync(lambda: acc.submit_code(str(data.get("code") or "")))
@@ -174,8 +180,10 @@ def register(ctx: ServerContext) -> None:
                     acc.set_enabled(kind, aid, action == "enable")
                 elif action == "rename" and aid:
                     acc.rename(kind, aid, str(data.get("name") or ""))
+                elif action == "quota_back" and aid:  # the user knows its quota is back
+                    acc.mark_back(kind, aid)
                 elif action == "remove" and aid:
-                    live = ("starting", "working", "waiting")
+                    live = ("starting", "working", "waiting", "quota")
                     for s in list(manager.sessions.values()):
                         if s.kind == kind and (s.options.get("account") or aiaccounts.MAIN) == aid and s.state in live:
                             manager.stop(s.id)
@@ -200,7 +208,23 @@ def register(ctx: ServerContext) -> None:
                         "model": (settings.data.get("helper_models") or {}).get(k, "")}
                     for k, p in aiaccounts.PROVIDERS.items()}
         return JSONResponse({"kinds": await anyio.to_thread.run_sync(listing),
-                             "login": acc.login.snapshot() if acc.login else None})
+                             "login": acc.login.snapshot() if acc.login else None,
+                             "policy": manager.quota_policy()})
+
+    @mcp.custom_route("/api/agents/session", methods=["POST"])
+    async def api_agents_session(request: Request) -> Response:
+        """One helper's settings: carry on by itself when its quota comes back (auto_resume), or carry on now."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        sid = str(data.get("id") or "")
+        if sid not in manager.sessions:
+            return fail(ValueError(f"no helper {sid!r}"))
+        if "auto_resume" in data:
+            manager.set_auto_resume(sid, bool(data["auto_resume"]))
+        if data.get("action") == "resume":
+            manager.resume_now(sid)
+        return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/agents/token", methods=["POST"])
     async def api_agents_token(request: Request) -> Response:
@@ -223,7 +247,7 @@ def register(ctx: ServerContext) -> None:
             manager.remove(str(data.get("id")))
         elif data.get("slug"):  # every helper on one project
             for s in list(manager.sessions.values()):
-                if s.slug == data["slug"] and s.state in ("starting", "working", "waiting"):
+                if s.slug == data["slug"] and s.state in ("starting", "working", "waiting", "quota"):
                     manager.stop(s.id)
         else:
             manager.stop(data.get("id") or None)

@@ -198,7 +198,8 @@ def register(mcp, net, manager, jobs, settings, port: int, secret: str) -> None:
         """Stop the helper agents working on the current project."""
         agent = chat_agent(ctx)
         slug = current(agent)
-        stopped = [s.id for s in list(manager.sessions.values()) if s.slug == slug and s.state in ("starting", "working", "waiting")]
+        live = ("starting", "working", "waiting", "quota")
+        stopped = [s.id for s in list(manager.sessions.values()) if s.slug == slug and s.state in live]
         for sid in stopped:
             manager.stop(sid)
         return f"Stopped {', '.join(stopped)}." if stopped else "No helper agents were running on this project."
