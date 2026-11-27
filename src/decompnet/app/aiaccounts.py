@@ -15,6 +15,7 @@ read from or sent anywhere else: who an account is (e-mail, plan) comes from the
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import re
@@ -130,6 +131,67 @@ class Accounts:
         self.login: Login | None = None
         self._lock = threading.Lock()
         self._who: dict[tuple[str, str], tuple[float, dict]] = {}
+        self._usage: dict | None = None  # kind -> account -> {tokens, usd, sessions, last}: usage.json
+        self._usage_saved = 0.0
+        self._usage_lock = threading.Lock()
+
+    # -- usage per account (what each subscription's helpers spent), and the names the user gives accounts
+    def _usage_data(self) -> dict:
+        if self._usage is None:
+            try:
+                self._usage = json.loads((self.root / "usage.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self._usage = {}
+        return self._usage
+
+    def _save_usage(self, force: bool = False) -> None:
+        if not force and time.time() - self._usage_saved < 10:  # a session reports often: at most every 10 s
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        tmp = self.root / "usage.json.tmp"
+        tmp.write_text(json.dumps(self._usage_data(), indent=1), encoding="utf-8")
+        tmp.replace(self.root / "usage.json")
+        self._usage_saved = time.time()
+
+    def record(self, kind: str, account: str | None, usd: float = 0.0, tokens: int = 0, session: bool = False) -> None:
+        """Add what a helper session on `account` spent (or that one started) to the account's usage."""
+        if kind not in PROVIDERS:
+            return
+        with self._usage_lock:
+            row = self._usage_data().setdefault(kind, {}).setdefault(account or MAIN, {})
+            row["tokens"] = int(row.get("tokens", 0)) + int(tokens or 0)
+            row["usd"] = round(float(row.get("usd", 0.0)) + float(usd or 0.0), 6)
+            row["sessions"] = int(row.get("sessions", 0)) + (1 if session else 0)
+            row["last"] = time.time()
+            with contextlib.suppress(OSError):
+                self._save_usage(force=session)
+
+    def flush(self) -> None:
+        with self._usage_lock:
+            if self._usage is not None:
+                with contextlib.suppress(OSError):
+                    self._save_usage(force=True)
+
+    def usage(self, kind: str, account: str) -> dict:
+        with self._usage_lock:
+            row = dict((self._usage_data().get(kind) or {}).get(account) or {})
+        return {"tokens": int(row.get("tokens", 0)), "usd": float(row.get("usd", 0.0)),
+                "sessions": int(row.get("sessions", 0)), "last": row.get("last")}
+
+    def name(self, kind: str, account: str) -> str:
+        return ((self._state().get("names") or {}).get(kind) or {}).get(account, "")
+
+    def rename(self, kind: str, account: str, name: str) -> None:
+        if account not in self.ids(kind):
+            raise ValueError(f"no {PROVIDERS[kind].name} account {account!r}")
+        name = " ".join(name.split())[:40]
+        data = self._state()
+        names = data.setdefault("names", {}).setdefault(kind, {})
+        if name:
+            names[account] = name
+        else:
+            names.pop(account, None)
+        self._save_state(data)
 
     def exe(self, kind: str):
         return self.exes.get(kind) or self.which({"claude": "claude", "codex": "codex", "antigravity": "agy"}[kind])
@@ -172,7 +234,8 @@ class Accounts:
     def list(self, kind: str) -> list[dict]:
         off = set((self._state().get("off") or {}).get(kind) or [])
         busy = self.login if self.login and self.login.kind == kind and self.login.state not in ("done", "failed") else None
-        return [{"id": a, "main": a == MAIN, "enabled": a not in off, **self.who(kind, a)}
+        return [{"id": a, "main": a == MAIN, "enabled": a not in off, "name": self.name(kind, a),
+                 "usage": self.usage(kind, a), **self.who(kind, a)}
                 for a in self.ids(kind) if not (busy and busy.new and busy.account == a)]
 
     def usable(self, kind: str) -> list[str]:
@@ -199,7 +262,11 @@ class Accounts:
         data = self._state()
         off = data.setdefault("off", {})
         off[kind] = [a for a in off.get(kind) or [] if a in self.ids(kind)]
+        (data.get("names") or {}).get(kind, {}).pop(account, None)  # its number may be a new account's later:
         self._save_state(data)
+        with self._usage_lock:  # neither its name nor its usage carry over
+            (self._usage_data().get(kind) or {}).pop(account, None)
+            self._save_usage(force=True)
 
     def sign_out_main(self, kind: str) -> None:
         if kind == "antigravity":
@@ -247,6 +314,8 @@ class Accounts:
         return out
 
     def label(self, kind: str, account: str | None) -> str:
+        if named := self.name(kind, account or MAIN):
+            return named
         if len(self.usable(kind)) < 2:
             return ""
         email = self.who(kind, account or MAIN).get("email") or account or MAIN

@@ -170,3 +170,36 @@ def test_a_sign_in_that_fails_leaves_nothing_behind(tmp_path, monkeypatch):
     _wait(acc)
     assert acc.login.state == "failed" and "invalid" in acc.login.error
     assert acc.ids("claude") == ["main"]
+
+
+def test_usage_and_names_are_kept_per_account(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "main"))
+    _codex_auth(tmp_path / "main", "main@example.com")
+    acc = aiaccounts.Accounts(tmp_path / "accounts")
+    _codex_auth(tmp_path / "accounts" / "codex" / "a1", "second@example.com")
+    acc.record("codex", "a1", session=True)
+    acc.record("codex", "a1", usd=0.5, tokens=1200)
+    acc.record("codex", None, tokens=300)  # the main account
+    acc.record("api", "x", tokens=5)  # not a managed CLI: nothing kept
+    acc.flush()
+    again = aiaccounts.Accounts(tmp_path / "accounts")  # a restart keeps it
+    assert again.usage("codex", "a1")["tokens"] == 1200 and again.usage("codex", "a1")["sessions"] == 1
+    assert again.usage("codex", "a1")["usd"] == 0.5 and again.usage("codex", "main")["tokens"] == 300
+    acc.rename("codex", "a1", "  work   account ")
+    rows = {a["id"]: a for a in acc.list("codex")}
+    assert rows["a1"]["name"] == "work account" and rows["a1"]["usage"]["tokens"] == 1200
+    assert acc.label("codex", "a1") == "work account"  # its helpers say which account they run on
+    acc.remove("codex", "a1")
+    _codex_auth(tmp_path / "accounts" / "codex" / "a1", "someone-else@example.com")  # the number comes back
+    rows = {a["id"]: a for a in acc.list("codex")}
+    assert rows["a1"]["name"] == "" and rows["a1"]["usage"]["tokens"] == 0  # nothing of the old one carries over
+
+
+def test_a_session_counts_for_its_account(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "main"))
+    m = agents.Manager.__new__(agents.Manager)
+    m.accounts = aiaccounts.Accounts(tmp_path / "accounts")
+    m.net = type("N", (), {"add_spend": lambda self, *a: None})()
+    s = agents.Session("codex-1", "codex", "c", "demo", "codex-1", {"account": "main"})
+    m._account(s, {"tokens": 700, "usd": 0.1})
+    assert m.accounts.usage("codex", "main")["tokens"] == 700 and s.tokens == 700

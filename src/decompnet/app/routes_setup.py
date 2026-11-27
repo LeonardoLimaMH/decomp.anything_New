@@ -163,6 +163,8 @@ def register(ctx: ServerContext) -> None:
                     acc.cancel_login()
                 elif action in ("enable", "disable") and aid:
                     acc.set_enabled(kind, aid, action == "enable")
+                elif action == "rename" and aid:
+                    acc.rename(kind, aid, str(data.get("name") or ""))
                 elif action == "remove" and aid:
                     live = ("starting", "working", "waiting")
                     for s in list(manager.sessions.values()):

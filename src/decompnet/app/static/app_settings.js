@@ -336,9 +336,17 @@ async function renderAiAccounts(data) {
   const login = data.login && ["starting", "waiting", "checking"].includes(data.login.state) ? data.login : null;
   const agentOf = (k) => (S.st.agents || []).find((a) => a.id === k) || { id: k, models: [] };
   const plan = (a) => [a.plan && a.plan.toUpperCase(), a.until && `until ${a.until.slice(0, 10)}`].filter(Boolean).join(" · ");
+  const used = (u) => {
+    if (!u || !u.sessions && !u.tokens) return "not used by helpers yet";
+    const tok = u.tokens >= 1e6 ? `${(u.tokens / 1e6).toFixed(1)}M` : u.tokens >= 1e3 ? `${Math.round(u.tokens / 1e3)}k` : `${u.tokens}`;
+    const when = u.last ? new Date(u.last * 1000).toLocaleString() : "";
+    return `helpers used it: ${u.sessions} session${u.sessions === 1 ? "" : "s"} · ${tok} tokens${u.usd ? ` · ${money(u.usd)}` : ""}${when ? ` · last ${when}` : ""}`;
+  };
   const card = (k, a) => `<div class="ep-card" data-kind="${esc(k)}" data-acc="${esc(a.id)}">
-      <div class="ar-head"><b>${esc(a.signed_in ? (a.email || "signed in") : "not signed in")}</b>
-        <span class="muted small">${a.main ? "main: the app's own sign-in" : "added"}${plan(a) ? " · " + esc(plan(a)) : ""}</span></div>
+      <div class="ar-head"><b>${a.name ? `${esc(a.name)} · ` : ""}${esc(a.signed_in ? (a.email || "signed in") : "not signed in")}</b>
+        <span class="muted small">${a.main ? "main: the app's own sign-in" : "added"}${plan(a) ? " · " + esc(plan(a)) : ""}</span>
+        <button class="link-btn small" data-rename type="button" title="A name for this account, shown on its helpers">${a.name ? "rename" : "name it"}</button></div>
+      <p class="muted small">${esc(used(a.usage))}</p>
       <div class="row"><label class="check inline"><input type="checkbox" data-on ${a.enabled ? "checked" : ""} ${a.signed_in ? "" : "disabled"}><span>Use for helpers</span></label>
         <span class="grow"></span>
         <button class="ghost small-btn" data-signin type="button" ${login ? "disabled" : ""}>${a.signed_in ? "Sign in again" : "Sign in"}</button>
@@ -388,6 +396,10 @@ async function renderAiAccounts(data) {
     const kind = c.dataset.kind, id = c.dataset.acc;
     c.querySelector("[data-on]").onchange = (ev) => act({ action: ev.target.checked ? "enable" : "disable", kind, id });
     c.querySelector("[data-signin]").onclick = () => act({ action: "signin", kind, id });
+    c.querySelector("[data-rename]").onclick = () => {
+      const name = prompt("A name for this account (empty: none)", "");
+      if (name !== null) act({ action: "rename", kind, id, name });
+    };
     const rm = c.querySelector("[data-remove]");
     if (rm) rm.onclick = () => {
       const ask = id === "main" ? "Sign this account out of the CLI on this computer? Its helper sessions stop." : "Remove this account from decomp.anything? Its helper sessions stop.";

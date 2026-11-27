@@ -202,6 +202,8 @@ class Manager:
                     opts["account"] = accounts.pick(kind, busy)
                 if accounts is not None and kind in aiaccounts.PROVIDERS and (who := accounts.label(kind, opts.get("account"))):
                     label = f"{label} ({who})"
+                if accounts is not None and kind in aiaccounts.PROVIDERS:
+                    accounts.record(kind, opts.get("account"), session=True)
                 s = Session(sid, kind, label, slug, sid, opts)
                 self.sessions[sid] = s
                 threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{sid}").start()
@@ -275,6 +277,8 @@ class Manager:
                     s.state = "stopped"
         if sid is not None:
             self.persist(self.running())
+        if (accounts := getattr(self, "accounts", None)) is not None:
+            accounts.flush()  # what the sessions spent in their last seconds, too
 
     def stop_project(self, slug: str) -> None:
         """Stop all helpers working on a specific project."""
@@ -315,6 +319,8 @@ class Manager:
         s.usd += usd
         s.tokens += tokens
         self.net.add_spend(s.slug, usd, tokens)
+        if (accounts := getattr(self, "accounts", None)) is not None and s.kind in aiaccounts.PROVIDERS:
+            accounts.record(s.kind, s.options.get("account"), usd, tokens)  # usage per account (AI accounts)
 
     def over_budget(self, slug: str) -> float | None:
         """The budget (USD) when the project's agents have spent it, else None."""
