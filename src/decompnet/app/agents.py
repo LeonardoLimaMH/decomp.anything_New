@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 
 from ..network import NetworkError
-from . import aiaccounts, tools
+from . import agenttools, aiaccounts, tools
 from .agentparse import _args_brief, clean_stderr, parse_line
 from .agenttools import (
     _SIGNED_OUT,
@@ -360,7 +360,7 @@ class Manager:
         """The session's account ran out of quota. True: carry on (on another account, or now that it came back);
         False: stop (stopped by the user, or a stand-in whose own provider ran out too)."""
         account = s.options.get("account") or aiaccounts.MAIN
-        until = e.until or time.time() + self.QUOTA_UNKNOWN
+        until = agenttools.retry_at(max(e.until or time.time() + self.QUOTA_UNKNOWN, time.time()))
         self.accounts.mark_out(s.kind, account, until)
         s.push("error", f"{self.accounts.display(s.kind, account)} is out of quota until "
                         f"{time.strftime('%H:%M', time.localtime(until))}{'' if e.until else ' (about: it did not say)'}: {e}")

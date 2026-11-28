@@ -166,8 +166,10 @@ _QUOTA = re.compile(r"hit your (?:usage )?limit|usage limit (?:reached|exceeded)
                     r"out of (?:usage|messages)|usage limit", re.IGNORECASE)
 _RESET_IN = re.compile(r"(?:resets?|try again|available again)\s+in\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?|"
                        r"seconds?|secs?|d|h|m|s)(?![a-z])[\s,]*(?:and\s+)?)+)", re.IGNORECASE)  # (2h48m11s, 3 hours)
-_RESET_AT = re.compile(r"(?:resets?|try again|available again)\s+(?:at\s+|after\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?\b",
-                       re.IGNORECASE)
+_RESET_AT = re.compile(r"(?:resets?|try again|available again)\s+(?:at\s+|after\s+|on\s+)?"
+                       r"(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:(\d{4}),?\s+)?(?:at\s+)?)?"  # Nov 28th, 2026
+                       r"(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?\b", re.IGNORECASE)
+_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 _RESET_EPOCH = re.compile(r"\|\s*(\d{10})\b")
 _UNIT = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 
@@ -186,16 +188,31 @@ def quota_out(said: str, now: float | None = None) -> tuple[str, float | None] |
         if secs:
             return line, now + secs
     if r := _RESET_AT.search(said):
-        hour, minute, ampm = int(r.group(1)), int(r.group(2) or 0), (r.group(3) or "").lower().replace(".", "")
+        mon, day, year = r.group(1), r.group(2), r.group(3)
+        hour, minute, ampm = int(r.group(4)), int(r.group(5) or 0), (r.group(6) or "").lower().replace(".", "")
         if ampm == "pm" and hour < 12:
             hour += 12
         elif ampm == "am" and hour == 12:
             hour = 0
-        if hour < 24 and minute < 60 and (ampm or r.group(2)):
+        dated = bool(mon and mon.lower() in _MONTHS)
+        if hour < 24 and minute < 60 and (ampm or r.group(5)):
             t = time.localtime(now)
+            if dated:
+                at = time.mktime((int(year) if year else t.tm_year, _MONTHS.index(mon.lower()) + 1, int(day),
+                                  hour, minute, 0, 0, 0, -1))
+                return line, max(at, now)  # a day it named that has passed: back any moment
             at = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, hour, minute, 0, 0, 0, -1))
-            return line, at if at > now else at + 86400
+            if at > now:
+                return line, at
+            # the minute it named has come (it said 4:22 at 4:22:40): back any moment, not tomorrow
+            return line, now if now - at < 3600 else at + 86400
     return line, None
+
+
+def retry_at(until: float) -> float:
+    """When to try again after a quota that comes back at `until`: the start of the minute after it. Providers name
+    the minute and keep the seconds (4:22 PM can be 4:22:59), so trying at the minute itself is often still too early."""
+    return (int(until) // 60 + 1) * 60
 
 
 # Claude Code's aliases always point at Anthropic's latest model of each kind.

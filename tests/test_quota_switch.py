@@ -9,12 +9,18 @@ import time
 import pytest
 
 from decompnet.app import agents, aiaccounts
-from decompnet.app.agenttools import OutOfQuota, no_credit, quota_out
+from decompnet.app.agenttools import OutOfQuota, no_credit, quota_out, retry_at
 from decompnet.app.engine import RomNetwork
 
 from .test_quota_failover import W, _codex_auth, app  # noqa: F401  (the app fixture)
 
 NOON = time.mktime((2026, 11, 27, 12, 0, 0, 0, 0, -1))
+
+
+@pytest.fixture(autouse=True)
+def _no_minute_margin(monkeypatch):
+    """The waits here are fractions of a second: no rounding up to the next minute."""
+    monkeypatch.setattr(agents.agenttools, "retry_at", lambda until: until)
 
 
 def test_what_each_provider_says_when_its_quota_is_spent():
@@ -31,6 +37,18 @@ def test_what_each_provider_says_when_its_quota_is_spent():
     assert quota_out("RESOURCE_EXHAUSTED: quota exhausted", NOON) == ("RESOURCE_EXHAUSTED: quota exhausted", None)
     assert quota_out("Error: too many requests (429)", NOON) is None  # a throttle, not the quota
     assert quota_out("insufficient_quota", NOON) is None and no_credit("insufficient_quota")  # an API bill
+
+
+def test_a_helper_tries_again_the_minute_after_the_one_its_quota_names():
+    at = time.mktime((2026, 11, 27, 16, 22, 0, 0, 0, -1))
+    assert retry_at(at) == at + 60  # "try again at 4:22 PM" can mean 4:22:59: try at 4:23:00
+    assert retry_at(at + 11) == at + 60 and retry_at(at + 59.5) == at + 60
+    # asked again at 4:22:40, it still says 4:22: that's now, not tomorrow
+    assert quota_out("You've hit your usage limit ... try again at 4:22 PM.", at + 40)[1] == at + 40
+    # with a day: that day (when it has passed already, now)
+    dated = "You've hit your usage limit. Upgrade to Pro ... or try again at Nov 28th, 2026 3:19 AM."
+    assert quota_out(dated, NOON)[1] == time.mktime((2026, 11, 28, 3, 19, 0, 0, 0, -1))
+    assert quota_out(dated, NOON + 2 * 86400)[1] == NOON + 2 * 86400
 
 
 def _accounts(tmp_path, monkeypatch, extra=("a1",)):
