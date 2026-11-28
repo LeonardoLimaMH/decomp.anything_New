@@ -45,6 +45,39 @@ class ForkViewMixin:
             "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
         }
 
+    def scopes(self, slug: str, mine: list[dict] | None = None, names_of: str | None = None) -> dict:
+        """The overview's Scopes panel (scopes.py): each part of the game with its own %. The code is the target
+        objects' as the look-alike index keeps it; units not read yet are read in the background."""
+        import json
+
+        from . import scopes
+
+        proj, fp, cfg = self.get(slug)
+        rows = []
+        for r in self.net.store.all("SELECT name, unit, size, status, meta FROM functions WHERE project_id=?", proj["id"]):
+            try:
+                sym = (json.loads(r["meta"] or "{}") or {}).get("symbol")
+            except ValueError:
+                sym = None
+            rows.append({"name": r["name"], "symbol": sym or r["name"], "unit": r["unit"] or "",
+                         "size": r["size"] or 0, "status": r["status"]})
+        with self._ilock:
+            entries = [e for e in self._index_of(proj, fp).values() if isinstance(e, dict)]
+        asm: dict[str, list[str]] = {}
+        for e in entries:
+            if isinstance(e.get("asm"), dict):
+                asm.update(e["asm"])
+        units = {r["unit"] for r in rows if r["unit"]}
+        read = sum(1 for e in entries if isinstance(e.get("asm"), dict))
+        if read < len(units) and cfg.get("ready"):
+            self.start_indexing(slug)
+        spec = (fp.manifest or {}).get("scopes") if fp.manifest else None
+        project = spec if isinstance(spec, list) else (spec or {}).get("custom") if isinstance(spec, dict) else None
+        binaries = (spec or {}).get("binaries") if isinstance(spec, dict) else None
+        return {"scopes": scopes.compute(rows, asm, platform=cfg.get("platform") or "", project=project,
+                                         binaries=binaries, mine=mine, focus=cfg.get("focus"), names_of=names_of),
+                "read": min(read, len(units)), "units": len(units)}
+
     def function_diff(self, slug: str, name: str) -> dict:
         """objdiff's diff of the function as it is in the source tree now."""
         _proj, fp, _cfg = self.get(slug)

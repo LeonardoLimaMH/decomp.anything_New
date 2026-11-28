@@ -777,3 +777,21 @@ a.ghost, a.primary { text-decoration: none; }
 .matrix-table th { font-weight: 500; }
 .matrix-table th:first-child { text-align: left; }
 .matrix-table td.ok { font-weight: 600; }
+
+/* Scopes (app_scopes.js): each part of the game with its own % */
+.scope-pad { display: grid; gap: 10px; }
+.scope-filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.scope-filter .search { flex: 1 1 180px; min-width: 0; height: 30px; }
+.scope-list { display: grid; }
+.scope-list > li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 9px 2px; }
+.scope-list > li + li { border-top: 1px solid var(--line-soft); }
+.scope-list .pin { color: var(--faint); font-size: 15px; line-height: 1; }
+.scope-list .pin.on { color: var(--work); }
+.scope-list .nm { font-weight: 600; font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope-list .nm small { font-weight: 500; color: var(--muted); margin-left: 6px; }
+.scope-list .pc { font: 600 14px/1 var(--mono); text-align: right; }
+.scope-list .upbar, .scope-list .sub, .scope-list .left { grid-column: 2 / 4; }
+.scope-list .sub { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.scope-list .left { font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px 12px; max-height: 180px; overflow: auto; }
+.scope-list .left .fn { font-family: var(--mono); font-size: 12px; cursor: pointer; }
+.scope-list .left .fn:hover { text-decoration: underline; }

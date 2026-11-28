@@ -64,7 +64,8 @@ class ForkIndexMixin:
         if unit.target is None or not unit.target.exists():
             return None
         hit = idx.get(unit.name)
-        if hit and hit.get("mtime") == unit.target.stat().st_mtime and "asm" in hit:  # (asm: since guess_struct)
+        # (asm: since guess_struct; a list where a matched unit's was mixed up with its literals' offsets, re-read)
+        if hit and hit.get("mtime") == unit.target.stat().st_mtime and isinstance(hit.get("asm"), dict):
             return hit
         row = self.net.store.one("SELECT meta FROM functions WHERE project_id=? AND unit=? LIMIT 1", proj["id"], unit.name)
         if row is None:
@@ -343,7 +344,7 @@ class ForkIndexMixin:
             entries = [e for e in self._index_of(proj, fp).values() if isinstance(e, dict)]
         asm: dict[str, list[str]] = {}
         for e in entries:
-            asm.update(e.get("asm") or {})
+            asm.update(e["asm"] if isinstance(e.get("asm"), dict) else {})
         if sym not in asm:
             raise NetworkError(f"{sym}'s code isn't in its target object (objdiff couldn't read the unit)")
         res = structguess.analyse(asm, sym, spec)
@@ -363,7 +364,7 @@ class ForkIndexMixin:
                 if typ and (typ, f"{f}'s parameter {int(how[3:]) + 1}") not in known:
                     known.append((typ, f"{f}'s parameter {int(how[3:]) + 1}"))
         text = structguess.render(res, sym, argument, known)
-        have = sum(1 for e in entries if "asm" in e)
+        have = sum(1 for e in entries if isinstance(e.get("asm"), dict))
         total = sum(1 for u in fp.units() if getattr(u, "target", None) is not None and u.target.exists())
         if have < total:
             text += (f"\n\n(The code of {have} of {total} source files was read so far; the rest is being read in the "

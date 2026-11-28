@@ -459,6 +459,7 @@ function renderStats(ov) {
   renderCompilerNotice(ov);
   renderAgentsKpi(ov);
   renderNext(ov);
+  if (typeof renderScopes === "function") renderScopes(ov);
 }
 
 function renderCompilerNotice(ov) {

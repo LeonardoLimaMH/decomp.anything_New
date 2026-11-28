@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import secrets
 import shutil
 import subprocess
@@ -81,6 +82,42 @@ def register(ctx: ServerContext) -> None:
             if data.get("id"):
                 net.knowledge.decide(slug, int(data["id"]), bool(data.get("accept")))
         return net.knowledge.listing(slug)
+
+    def p_scopes(slug, request, data):
+        """Each part of the game with its own % (scopes.py). POST adds one of the user's own (a name and the units or
+        functions it covers, as globs) or removes it."""
+        from . import scopes
+
+        mine_all = settings.data.setdefault("scopes", {})
+        mine = [s for s in mine_all.get(slug) or [] if isinstance(s, dict)]
+        if request.method == "POST":
+            if data.get("action") == "add":
+                name = str(data.get("name") or "").strip()[:60]
+                globs = [g for g in re.split(r"[\s,]+", str(data.get("match") or "")) if g][:40]
+                if not name or not globs:
+                    raise ValueError("a scope needs a name and what it covers (units or functions, globs allowed)")
+                mine = [s for s in mine if s.get("name") != name] + [
+                    {"name": name, "units": globs, "functions": globs, "helpers": bool(data.get("helpers"))}]
+            elif data.get("action") == "focus":  # this scope becomes the project's focus (agents can take it first)
+                key = str(data.get("key") or "")
+                got = net.forks.scopes(slug, mine, names_of=key) if net.fork_slug(slug) else {"scopes": []}
+                hit = next((s for s in got["scopes"] if s["key"] == key), None)
+                if hit is None or not hit.get("names"):
+                    raise ValueError("no such scope, or it has no functions")
+                net._update_cfg(slug, lambda cfg: cfg.__setitem__("focus", {"name": hit["label"], "functions": hit["names"][:5000]}))
+            elif data.get("action") == "remove":
+                mine = [s for s in mine if f"mine:{s.get('name')}" != data.get("key")]
+            else:
+                raise ValueError("unknown action")
+            mine_all[slug] = mine
+            settings.save()
+        if net.fork_slug(slug):
+            return net.forks.scopes(slug, mine)
+        proj = net.project_row(slug)
+        rows = [{"name": r["name"], "symbol": r["name"], "unit": "", "size": r["size"] or 0, "status": r["status"]}
+                for r in net.store.all("SELECT name, size, status FROM functions WHERE project_id=?", proj["id"])]
+        focus = json.loads(proj["config"] or "{}").get("focus")
+        return {"scopes": scopes.compute(rows, {}, mine=mine, focus=focus), "read": 0, "units": 0}
 
     def p_compiler(slug, request, data):
         net.set_compiler(slug, str(data.get("toolchain", "")), data.get("flags") or None)
@@ -307,6 +344,7 @@ def register(ctx: ServerContext) -> None:
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]),
         "/api/knowledge": (p_knowledge, ["GET", "POST"]),
+        "/api/scopes": (p_scopes, ["GET", "POST"]),
         "/api/permute/deep": (p_deep_permute, ["GET", "POST"]),
         "/api/claim_order": (p_claim_order, ["POST"]), "/api/function/give_back": (p_give_back, ["POST"]),
         "/api/focus": (p_focus, ["POST"]),

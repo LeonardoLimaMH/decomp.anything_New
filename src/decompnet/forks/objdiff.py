@@ -198,12 +198,12 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
     if pct is not None and float(pct) >= 100.0 and symbol is not None and target is not None and base is not None and base.exists():
         from . import literals
 
-        insns, at = [], 0
+        placed, at = [], 0  # (offset, mnemonic) of the target's instructions
         for r in lrows:
             ins = r.get("instruction") or {}
             if ins.get("formatted"):
-                insns.append((at, ins["formatted"].split(None, 1)[0]))
+                placed.append((at, ins["formatted"].split(None, 1)[0]))
             at += int(ins.get("size") or 4)
-        wrong = literals.mismatches(target, base, symbol, insns)
+        wrong = literals.mismatches(target, base, symbol, placed)
     return FunctionDiff(symbol, float(pct) if pct is not None else None, rows, int(left.get("size", 0)), scores, order, ops,
                         renamed, wrong, insns)

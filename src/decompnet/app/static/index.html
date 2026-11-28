@@ -240,6 +240,16 @@
       </div>
     </div>
 
+    <section class="panel" id="scopePanel" hidden>
+      <header class="panel-head"><h2>Scopes</h2><span class="muted small" id="scopeState"></span><span class="grow"></span>
+        <button class="ghost small-btn" id="scopeAdd" type="button">New scope</button></header>
+      <div class="pad scope-pad">
+        <div class="scope-filter"><div class="seg small" id="scopeGroups"></div>
+          <input id="scopeSearch" class="search" type="search" placeholder="Filter scopes" aria-label="Filter scopes" autocomplete="off"></div>
+        <ul class="scope-list" id="scopeList"></ul>
+      </div>
+    </section>
+
     <div class="next" id="nextStep" hidden></div>
     <div class="autopilot" id="autopilot" hidden>
       <span class="ap-icon" aria-hidden="true"></span>
@@ -675,6 +685,7 @@
 <script src="/assets/app_inspector.js?v=5"></script>
 <script src="/assets/app_functions.js?v=5"></script>
 <script src="/assets/app_settings.js?v=5"></script>
+<script src="/assets/app_scopes.js?v=5"></script>
 <script src="/assets/console.js?v=5"></script>
 </body>
 </html>
